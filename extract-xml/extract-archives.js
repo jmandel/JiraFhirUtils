@@ -1,6 +1,7 @@
-import { $ } from "bun";
+import { execa } from "execa";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 
 // --- Configuration ---
 const BULK_ARCHIVE = "bulk.tar.gz";
@@ -23,12 +24,12 @@ async function extractArchive(archivePath, targetDir) {
   try {
     if (fs.existsSync(fullTargetDir)) {
       console.log(`Target directory ${targetDir} already exists. Removing...`);
-      await $`rm -rf ${fullTargetDir}`;
+      await execa('rm', ['-rf', fullTargetDir]);
     }
     
-    await $`mkdir -p ${fullTargetDir}`;
+    await execa('mkdir', ['-p', fullTargetDir]);
     
-    await $`tar -xzf ${fullArchivePath} -C ${fullTargetDir}`;
+    await execa('tar', ['-xzf', fullArchivePath, '-C', fullTargetDir]);
     
     console.log(`✓ Successfully extracted ${archivePath}`);
     return true;
@@ -43,7 +44,8 @@ async function main() {
   console.log("JIRA Archive Extraction Utility");
   console.log("===============================\n");
   
-  const scriptDir = path.dirname(new URL(import.meta.url).pathname);
+  const __filename = fileURLToPath(import.meta.url);
+  const scriptDir = path.dirname(__filename);
   process.chdir(scriptDir);
   
   console.log(`Working directory: ${process.cwd()}\n`);

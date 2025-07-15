@@ -1,8 +1,9 @@
-import { Database } from "bun:sqlite";
-import { Glob } from "bun";
+import Database from "better-sqlite3";
+import { glob } from "glob";
 import { XMLParser } from "fast-xml-parser";
 import path from "path";
 import fs from "fs";
+import { promises as fsPromises } from "fs";
 
 // --- Configuration ---
 const DATABASE_FILE = "jira_issues.sqlite";
@@ -102,7 +103,7 @@ async function processXmlFile(filePath, db) {
   console.log(`\nProcessing file: ${filePath}`);
 
   try {
-    const fileContent = await Bun.file(filePath).text();
+    const fileContent = await fsPromises.readFile(filePath, 'utf-8');
     const parser = new XMLParser({
       ignoreAttributes: false,
       attributeNamePrefix: "@_",
@@ -233,8 +234,8 @@ async function main() {
       return;
     }
   
-  const glob = new Glob(XML_GLOB_PATTERN);
-  const files = await Array.fromAsync(glob.scan(initialPath));
+  const pattern = path.join(initialPath, XML_GLOB_PATTERN);
+  const files = await glob(pattern, { nodir: true });
 
   if (files.length === 0) {
     console.log(`No XML files found matching pattern '${XML_GLOB_PATTERN}' in subdirectory '${INITIAL_SUBDIRECTORY}'.`);
@@ -244,8 +245,7 @@ async function main() {
 
   console.log(`Found ${files.length} XML files to process.`);
 
-  for (const file of files) {
-    const filePath = path.join(initialPath, file);
+  for (const filePath of files) {
     await processXmlFile(filePath, db);
   }
 

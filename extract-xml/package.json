@@ -1,0 +1,21 @@
+{
+  "name": "jira-xml-extractor",
+  "version": "1.0.0",
+  "description": "JIRA XML extraction and SQLite loading utilities",
+  "type": "module",
+  "scripts": {
+    "extract": "node extract-archives.js",
+    "load-initial": "node load-initial.js",
+    "load-updates": "node load-updates.js",
+    "create-fts": "node create-fts.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.1.2",
+    "execa": "^9.3.0",
+    "fast-xml-parser": "^4.4.1",
+    "glob": "^11.0.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

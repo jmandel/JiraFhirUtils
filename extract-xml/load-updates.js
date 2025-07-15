@@ -1,8 +1,9 @@
-import { Database } from "bun:sqlite";
-import { Glob } from "bun";
+import Database from "better-sqlite3";
+import { glob } from "glob";
 import { XMLParser } from "fast-xml-parser";
 import path from "path";
 import fs from "fs";
+import { promises as fsPromises } from "fs";
 
 // --- Configuration ---
 const DATABASE_FILE = "jira_issues.sqlite";
@@ -31,7 +32,7 @@ async function processUpdateFile(filePath, db) {
   console.log(`\nProcessing update file: ${filePath}`);
 
   try {
-    const fileContent = await Bun.file(filePath).text();
+    const fileContent = await fsPromises.readFile(filePath, 'utf-8');
     const parser = new XMLParser({
       ignoreAttributes: false,
       attributeNamePrefix: "@_",
@@ -200,8 +201,8 @@ async function main() {
   const db = new Database(DATABASE_FILE);
   db.exec("PRAGMA journal_mode = WAL;");
 
-  const glob = new Glob(XML_GLOB_PATTERN);
-  const files = await Array.fromAsync(glob.scan(updatePath));
+  const pattern = path.join(updatePath, XML_GLOB_PATTERN);
+  const files = await glob(pattern, { nodir: true });
 
   if (files.length === 0) {
     console.log(`No XML files found in subdirectory '${UPDATE_SUBDIRECTORY}'.`);
@@ -211,8 +212,7 @@ async function main() {
 
   console.log(`Found ${files.length} XML files to process in '${UPDATE_SUBDIRECTORY}'.`);
 
-  for (const file of files) {
-    const filePath = path.join(updatePath, file);
+  for (const filePath of files) {
     await processUpdateFile(filePath, db);
   }
 

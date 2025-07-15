@@ -1,6 +1,6 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 import { existsSync } from "fs";
 
 const DB_FILE = "jira_issues.sqlite";
@@ -8,9 +8,9 @@ const DB_FILE = "jira_issues.sqlite";
 function setupFTS5Tables(db) {
     console.log("Dropping and creating FTS5 tables...");
     
-    db.run(`DROP table IF EXISTS issues_fts`);
+    db.exec(`DROP table IF EXISTS issues_fts`);
 
-    db.run(`
+    db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS issues_fts USING fts5(
             issue_key,
             issue_int,
@@ -34,9 +34,9 @@ function setupFTS5Tables(db) {
         )
     `);
 
-    db.run(`DROP table IF EXISTS comments_fts`);
+    db.exec(`DROP table IF EXISTS comments_fts`);
 
-    db.run(`
+    db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS comments_fts USING fts5(
             comment_id,
             issue_key,
@@ -58,7 +58,7 @@ function populateIssuesFTS(db) {
     db.exec("BEGIN TRANSACTION");
     
     try {
-        db.run(`
+        db.exec(`
             INSERT INTO issues_fts (
                 issue_key,
                 issue_int,
@@ -119,7 +119,7 @@ function populateIssuesFTS(db) {
         
         db.exec("COMMIT");
         
-        const count = db.query("SELECT COUNT(*) as count FROM issues_fts").get().count;
+        const count = db.prepare("SELECT COUNT(*) as count FROM issues_fts").get().count;
         const elapsed = Date.now() - startTime;
         console.log(`✓ Populated issues_fts with ${count} entries in ${elapsed}ms`);
     } catch (error) {
@@ -136,7 +136,7 @@ function populateCommentsFTS(db) {
     db.exec("BEGIN TRANSACTION");
     
     try {
-        db.run(`
+        db.exec(`
             INSERT INTO comments_fts (
                 comment_id,
                 issue_key,
@@ -153,7 +153,7 @@ function populateCommentsFTS(db) {
         
         db.exec("COMMIT");
         
-        const count = db.query("SELECT COUNT(*) as count FROM comments_fts").get().count;
+        const count = db.prepare("SELECT COUNT(*) as count FROM comments_fts").get().count;
         const elapsed = Date.now() - startTime;
         console.log(`✓ Populated comments_fts with ${count} entries in ${elapsed}ms`);
     } catch (error) {

@@ -1,0 +1,28 @@
+{
+  "name": "jira-fhir-utils",
+  "version": "1.0.0",
+  "description": "Tools and utilities to ease Jira ticket processing for FHIR",
+  "type": "module",
+  "scripts": {
+    "extract-archives": "node extract-xml/extract-archives.js",
+    "load-initial": "node extract-xml/load-initial.js",
+    "load-updates": "node extract-xml/load-updates.js",
+    "create-fts": "node extract-xml/create-fts.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "execa": "^9.5.2",
+    "fast-xml-parser": "^4.5.1",
+    "glob": "^11.0.0"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "jira",
+    "fhir",
+    "sqlite",
+    "xml",
+    "mcp"
+  ],
+  "author": "",
+  "license": "ISC"
+}
