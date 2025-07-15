@@ -5,7 +5,7 @@
 /temp
 /local
 *.local
-*.local.env
+*.local.*
 
 # Ignore uncompressed XML files
 extract-xml/bulk
@@ -16,3 +16,4 @@ extract-xml/updates
 *.sqlite-wal
 *.sqlite
 *.sqlite.sql
+.claude/settings.local.json
