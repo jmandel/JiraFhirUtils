@@ -2,6 +2,8 @@
 
 A Model Context Protocol (MCP) server for read-only access to the JIRA issues SQLite database. This server provides tools to browse work queues and search for related tickets.
 
+The server supports both stdio (default) and HTTP transport modes, allowing flexible integration with MCP clients.
+
 ## Features
 
 - **Browse Work Queue**: Filter issues by project key, work group, resolution, status, and/or assignee
@@ -21,20 +23,31 @@ A Model Context Protocol (MCP) server for read-only access to the JIRA issues SQ
 2. Install dependencies:
    ```bash
    npm install
-   # or
-   bun install
    ```
 
 ## Usage
 
 ### Running the Server
 
-Start the MCP server:
+#### Stdio Mode (Default)
+Start the MCP server in stdio mode for use with Claude Desktop or other stdio-based MCP clients:
 ```bash
 npm start
-# or
-bun run index.js
 ```
+
+#### HTTP Mode
+Start the MCP server with an HTTP endpoint:
+```bash
+# Run on port 3000 (using npm script)
+npm run start:http
+
+# Or specify a custom port
+node index.js --port 8080
+# or
+node index.js -p 8080
+```
+
+The server will start both stdio and HTTP transports when a port is specified. The HTTP endpoint will be available at `http://localhost:<port>/mcp`.
 
 ### Configuring with Claude Desktop
 
@@ -52,17 +65,53 @@ Add the following to your Claude Desktop configuration file (`claude_desktop_con
 }
 ```
 
-Or if using Bun:
-```json
-{
-  "mcpServers": {
-    "fhir-jira": {
-      "command": "bun",
-      "args": ["run", "/path/to/fhir-jira-mcp/index.js"],
-      "env": {}
-    }
-  }
-}
+## HTTP API
+
+When running in HTTP mode, the server exposes the following endpoints:
+
+- `POST /mcp` - Main MCP endpoint for all tool requests
+- `GET /health` - Health check endpoint
+
+### Authentication
+The HTTP server operates in stateless mode with no session management. All requests are independent.
+
+### CORS
+The server is configured with permissive CORS settings to allow requests from any origin.
+
+### Example HTTP Request
+
+```bash
+# List issues
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "list_issues",
+      "arguments": {
+        "project_key": "FHIR",
+        "limit": 10
+      }
+    },
+    "id": 1
+  }'
+
+# Search issues
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "search_issues",
+      "arguments": {
+        "query": "patient resource",
+        "limit": 5
+      }
+    },
+    "id": 2
+  }'
 ```
 
 ## Available Tools
@@ -184,6 +233,10 @@ The server expects a SQLite database (`jira_issues.sqlite`) in the parent direct
 - Full-text search uses SQLite's FTS5 extension for efficient querying
 - All responses are returned as JSON-formatted text
 - The database path is hardcoded to `../jira_issues.sqlite` relative to the server location
+- Note that if you want to test the MCP Server, a tool such as [ModelContextProtocol/inspector](https://github.com/modelcontextprotocol/inspector) is useful:
+```sh
+npx @modelcontextprotocol/inspector
+```
 
 ## Troubleshooting
 

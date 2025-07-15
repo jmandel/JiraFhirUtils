@@ -2,18 +2,44 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import express from 'express';
+import cors from 'cors';
+import { program } from 'commander';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const _defaultSearchFields = [
+  'title', 
+  'description', 
+  'summary', 
+  'resolution', 
+  'resolution_description', 
+  'related_url', 
+  'related_artifacts', 
+  'related_pages'
+];
+
+
+// Parse command line arguments
+program
+  .name('fhir-jira-mcp')
+  .description('FHIR JIRA MCP Server')
+  .option('-p, --port <port>', 'HTTP server port (optional)', parseInt)
+  .parse();
+
+const options = program.opts();
+
 // Database path - assumes the database is in the parent directory
 const DB_PATHS = [
   path.join(process.cwd(), 'jira_issues.sqlite'),
+  path.join(process.cwd(), '..', 'jira_issues.sqlite'),
   path.join(__dirname, 'jira_issues.sqlite'),
   path.join(__dirname, '..', 'jira_issues.sqlite'),
 ];
@@ -36,9 +62,11 @@ class JiraIssuesMCPServer {
   
   findDatabasePath() {
     for (const dbPath of DB_PATHS) {
-      if (fs.existsSync(dbPath)) {
-        return dbPath;
-      }
+      try {
+        if (fs.existsSync(dbPath)) {
+          return dbPath;
+        }
+      } catch (error) { }
     }
     throw new Error('jira_issues.sqlite not found in expected locations.');
   }
@@ -46,7 +74,7 @@ class JiraIssuesMCPServer {
 
   async init() {
     try {
-      const dbPath = findDatabasePath();
+      const dbPath = this.findDatabasePath();
       this.db = new Database(dbPath, { readonly: true });
       console.error(`Connected to database at ${dbPath}`);
     } catch (error) {
@@ -76,7 +104,7 @@ class JiraIssuesMCPServer {
         },
         {
           name: 'search_issues',
-          description: 'Search for tickets matching against related_url, related_artifacts, related_pages, title, and/or summary',
+          description: 'Search for tickets using SQLite FTS5 testing against issue fields',
           inputSchema: {
             type: 'object',
             properties: {
@@ -86,7 +114,7 @@ class JiraIssuesMCPServer {
                 description: 'Fields to search in (default: all)',
                 items: {
                   type: 'string',
-                  enum: ['related_url', 'related_artifacts', 'related_pages', 'title', 'summary']
+                  enum: _defaultSearchFields,
                 }
               },
               limit: { type: 'number', description: 'Maximum number of results (default: 50)', default: 50 }
@@ -100,7 +128,7 @@ class JiraIssuesMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              issue_key: { type: 'string', description: 'The issue key (e.g., PROJ-123)', required: true }
+              issue_key: { type: 'string', description: 'The issue key (e.g., FHIR-123)', required: true }
             },
             required: ['issue_key'],
           },
@@ -111,7 +139,7 @@ class JiraIssuesMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              issue_key: { type: 'string', description: 'The issue key (e.g., PROJ-123)', required: true }
+              issue_key: { type: 'string', description: 'The issue key (e.g., FHIR-123)', required: true }
             },
             required: ['issue_key'],
           },
@@ -160,7 +188,7 @@ class JiraIssuesMCPServer {
   async listIssues(args) {
     const { project_key, work_group, resolution, status, assignee, limit = 50, offset = 0 } = args;
     
-    let query = 'SELECT * FROM issues WHERE 1=1';
+    let query = 'SELECT * FROM issues_fts WHERE 1=1';
     const params = {};
     
     if (project_key) {
@@ -169,7 +197,7 @@ class JiraIssuesMCPServer {
     }
     
     if (work_group) {
-      query += ' AND key IN (SELECT issue_key FROM custom_fields WHERE field_name = "Work Group" AND field_value = @work_group)';
+      query += ` AND work_group = @work_group`;
       params.work_group = work_group;
     }
     
@@ -189,33 +217,22 @@ class JiraIssuesMCPServer {
     }
     
     // query += ' ORDER BY updated_at DESC LIMIT @limit OFFSET @offset';
-    query += ' ORDER BY issue_key DESC LIMIT @limit OFFSET @offset';
+    query += ' ORDER BY issue_int DESC LIMIT @limit OFFSET @offset';
     params.limit = limit;
     params.offset = offset;
     
     try {
+      // console.log(`Executing query: ${query} with params:`, params);
       const stmt = this.db.prepare(query);
       const issues = stmt.all(params);
-      
-      // Get work groups for each issue
-      const issuesWithWorkGroups = issues.map(issue => {
-        const workGroupStmt = this.db.prepare(
-          'SELECT field_value FROM custom_fields WHERE issue_key = ? AND field_name = "Work Group"'
-        );
-        const workGroupResult = workGroupStmt.get(issue.key);
-        return {
-          ...issue,
-          work_group: workGroupResult?.field_value || null
-        };
-      });
       
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
-            total: issuesWithWorkGroups.length,
+            total: issues.length,
             offset,
-            issues: issuesWithWorkGroups
+            issues: issues
           }, null, 2)
         }]
       };
@@ -234,57 +251,37 @@ class JiraIssuesMCPServer {
     const { query, search_fields, limit = 50 } = args;
     
     // Use FTS5 for efficient searching
-    let ftsQuery = 'SELECT DISTINCT i.* FROM issues i JOIN issues_fts fts ON i.key = fts.issue_key WHERE ';
+    let ftsQuery = 'SELECT * FROM issues_fts WHERE ';
     const searchConditions = [];
     
     const fieldsToSearch = search_fields && search_fields.length > 0 
       ? search_fields 
-      : ['related_url', 'related_artifacts', 'related_pages', 'title', 'summary'];
+      : _defaultSearchFields;
     
     // Build the FTS query
     if (fieldsToSearch.length === 1) {
-      searchConditions.push(`fts.${fieldsToSearch[0]} MATCH @query`);
+      searchConditions.push(`${fieldsToSearch[0]} MATCH @query`);
     } else {
-      searchConditions.push(`fts MATCH @query`);
+      searchConditions.push(`issues_fts MATCH @query`);
     }
     
     ftsQuery += searchConditions.join(' OR ');
-    ftsQuery += ' ORDER BY fts.rank DESC';
+    ftsQuery += ' ORDER BY rank DESC';
     ftsQuery += ' LIMIT @limit';
     
     try {
+      // console.log(`Executing query: ${ftsQuery} with params:`, { query, limit });
       const stmt = this.db.prepare(ftsQuery);
       const issues = stmt.all({ query, limit });
-      
-      // Get custom fields including work group
-      const issuesWithDetails = issues.map(issue => {
-        const customFieldsStmt = this.db.prepare(
-          'SELECT field_name, field_value FROM custom_fields WHERE issue_key = ?'
-        );
-        const customFields = customFieldsStmt.all(issue.key);
-        
-        const customFieldsMap = {};
-        customFields.forEach(field => {
-          customFieldsMap[field.field_name] = field.field_value;
-        });
-        
-        return {
-          ...issue,
-          work_group: customFieldsMap['Work Group'] || null,
-          related_url: customFieldsMap['Related URL'] || null,
-          related_artifacts: customFieldsMap['Related Artifacts'] || null,
-          related_pages: customFieldsMap['Related Pages'] || null,
-        };
-      });
       
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
-            total: issuesWithDetails.length,
+            total: issues.length,
             query,
             search_fields: fieldsToSearch,
-            issues: issuesWithDetails
+            issues: issues
           }, null, 2)
         }]
       };
@@ -414,7 +411,7 @@ class JiraIssuesMCPServer {
   async listWorkGroups() {
     try {
       const stmt = this.db.prepare(
-        'SELECT DISTINCT field_value as work_group FROM custom_fields WHERE field_name = "Work Group" AND field_value IS NOT NULL ORDER BY field_value'
+        `SELECT DISTINCT(work_group) as work_group FROM issues_fts`
       );
       const workGroups = stmt.all();
       
@@ -441,9 +438,55 @@ class JiraIssuesMCPServer {
   async run() {
     await this.init();
     
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
+    // Always start stdio transport
+    const stdioTransport = new StdioServerTransport();
+    await this.server.connect(stdioTransport);
     console.error('FHIR JIRA MCP Server running on stdio');
+    
+    // Start HTTP server if port is specified
+    if (options.port) {
+      const app = express();
+      
+      // Configure CORS to be as permissive as possible
+      app.use(cors({
+        origin: '*',
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allowedHeaders: '*',
+        exposedHeaders: ['Mcp-Session-Id'],
+      }));
+      
+      app.use(express.json({ limit: '50mb' }));
+      
+      // Create HTTP transport in stateless mode
+      const httpTransport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // stateless mode - no session management
+      });
+      
+      // Connect the HTTP transport to the server
+      await this.server.connect(httpTransport);
+      
+      // Handle MCP requests at /mcp endpoint
+      app.post('/mcp', async (req, res) => {
+        try {
+          await httpTransport.handleRequest(req, res, req.body);
+        } catch (error) {
+          console.error('Error handling MCP request:', error);
+          res.status(500).json({ error: 'Internal server error' });
+        }
+      });
+      
+      // Health check endpoint
+      app.get('/health', (req, res) => {
+        res.json({ status: 'ok', service: 'fhir-jira-mcp' });
+      });
+      
+      // Start HTTP server
+      app.listen(options.port, () => {
+        console.error(`HTTP server listening on port ${options.port}`);
+        console.error(`MCP endpoint: http://localhost:${options.port}/mcp`);
+      });
+    }
   }
 }
 

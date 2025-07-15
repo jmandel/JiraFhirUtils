@@ -13,6 +13,7 @@ function setupFTS5Tables(db) {
     db.run(`
         CREATE VIRTUAL TABLE IF NOT EXISTS issues_fts USING fts5(
             issue_key,
+            issue_int,
             title,
             description,
             summary,
@@ -60,6 +61,7 @@ function populateIssuesFTS(db) {
         db.run(`
             INSERT INTO issues_fts (
                 issue_key,
+                issue_int,
                 title,
                 description,
                 summary,
@@ -80,6 +82,7 @@ function populateIssuesFTS(db) {
             )
             SELECT 
                 i.key,
+                CAST(SUBSTR(i.key, INSTR(i.key, '-') + 1) AS INTEGER),
                 i.title,
                 i.description,
                 i.summary,
