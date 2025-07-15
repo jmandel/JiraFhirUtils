@@ -1,3 +1,5 @@
+.DS_Store
+
 # Ignore experimental and temporary files
 /extract-xls
 /temp

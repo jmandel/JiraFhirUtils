@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "fhir-jira": {
+      "command": "node",
+      "args": ["./fhir-jira-mcp/index.js"],
+      "env": {},
+      "cwd": "/path/to/JiraFhirUtils"
+    }
+  }
+}
