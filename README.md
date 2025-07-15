@@ -45,6 +45,6 @@ This folder contains utilities to create a SQLite database based on Jira tickets
   - Search issues: `SELECT * FROM issues_fts WHERE issues_fts MATCH 'search term'`
   - Search comments: `SELECT * FROM comments_fts WHERE comments_fts MATCH 'search term'`
   - Phrase search: `SELECT * FROM issues_fts WHERE issues_fts MATCH '"exact phrase"'`
-  - Field-specific: `SELECT * FROM issues_fts WHERE title MATCH 'search
+  - Field-specific: `SELECT * FROM issues_fts WHERE title MATCH 'search term'`
 
 Scripts require [Bun](https://bun.sh/) and expect the relevant XML files to be present in their respective directories (`bulk` for initial load, `updates` for updates). The database file is named `jira_issues.sqlite` and will be created or updated in the current working directory.

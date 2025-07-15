@@ -23,7 +23,13 @@ function setupFTS5Tables(db) {
             priority,
             status,
             assignee,
-            reporter
+            reporter,
+            work_group,
+            change_category,
+            change_impact,
+            related_url,
+            related_artifacts,
+            related_pages
         )
     `);
 
@@ -64,7 +70,13 @@ function populateIssuesFTS(db) {
                 priority,
                 status,
                 assignee,
-                reporter
+                reporter,
+                work_group,
+                change_category,
+                change_impact,
+                related_url,
+                related_artifacts,
+                related_pages
             )
             SELECT 
                 i.key,
@@ -72,16 +84,34 @@ function populateIssuesFTS(db) {
                 i.description,
                 i.summary,
                 i.resolution,
-                COALESCE(cf.field_value, '') as resolution_description,
+                COALESCE(rd.field_value, '') as resolution_description,
                 i.project_key,
                 i.type,
                 i.priority,
                 i.status,
                 i.assignee,
-                i.reporter
+                i.reporter,
+                COALESCE(trim(REPLACE(REPLACE(REPLACE(wg.field_value, CHAR(10), ''), CHAR(13), ''), '&amp;', '&')), '') as work_group,
+                COALESCE(cc.field_value, '') as change_category,
+                COALESCE(ci.field_value, '') as change_impact,
+                COALESCE(ru.field_value, '') as related_url,
+                COALESCE(trim(REPLACE(REPLACE(REPLACE(ra.field_value, CHAR(10), ''), CHAR(13), ''), '&amp;', '&')), '') as related_artifacts,
+                COALESCE(trim(REPLACE(REPLACE(REPLACE(rp.field_value, CHAR(10), ''), CHAR(13), ''), '&amp;', '&')), '') as related_pages
             FROM issues i
-            LEFT JOIN custom_fields cf ON cf.issue_key = i.key 
-                AND cf.field_name = 'Resolution Description'
+            LEFT JOIN custom_fields rd ON rd.issue_key = i.key 
+                AND rd.field_name = 'Resolution Description'
+            LEFT JOIN custom_fields wg on wg.issue_key = i.key
+                AND wg.field_name = 'Work Group'
+            LEFT JOIN custom_fields cc ON cc.issue_key = i.key
+                AND cc.field_name = 'Change Category'
+            LEFT JOIN custom_fields ci ON ci.issue_key = i.key 
+                AND ci.field_name = 'Change Impact'
+            LEFT JOIN custom_fields ru ON ru.issue_key = i.key
+                AND ru.field_name = 'Related URL'
+            LEFT JOIN custom_fields ra ON ra.issue_key = i.key
+                AND ra.field_name = 'Related Artifact(s)'
+            LEFT JOIN custom_fields rp ON rp.issue_key = i.key
+                AND rp.field_name = 'Related Page(s)'
         `);
         
         db.exec("COMMIT");
