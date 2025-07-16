@@ -108,7 +108,7 @@ class JiraIssuesMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              query: { type: 'string', description: 'Search query string', required: true },
+              query: { type: 'string', description: 'Search query string' },
               search_fields: {
                 type: 'array',
                 description: 'Fields to search in (default: all)',
@@ -128,7 +128,7 @@ class JiraIssuesMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              issue_key: { type: 'string', description: 'The issue key (e.g., FHIR-123)', required: true }
+              issue_key: { type: 'string', description: 'The issue key (e.g., FHIR-123)' }
             },
             required: ['issue_key'],
           },
@@ -139,7 +139,7 @@ class JiraIssuesMCPServer {
           inputSchema: {
             type: 'object',
             properties: {
-              issue_key: { type: 'string', description: 'The issue key (e.g., FHIR-123)', required: true }
+              issue_key: { type: 'string', description: 'The issue key (e.g., FHIR-123)' }
             },
             required: ['issue_key'],
           },
