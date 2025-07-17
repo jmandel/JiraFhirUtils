@@ -115,16 +115,31 @@ export class TFIDFProcessor {
   calculateTFIDF(documentId) {
     const scores = [];
     
-    this.tfidf.tfidfs(null, (i, measure, key) => {
-      if (key && key.toString() === documentId.toString()) {
-        this.tfidf.listTerms(i).forEach(term => {
-          scores.push({
-            term: term.term,
-            tfidf: term.tfidf,
-            tf: term.tf
-          });
-        });
+    // Ensure documentId is valid
+    if (!documentId) {
+      return scores;
+    }
+    
+    // Find the document index for this documentId
+    let documentIndex = -1;
+    this.documents.forEach((doc, index) => {
+      if (doc.key === documentId) {
+        documentIndex = index;
       }
+    });
+    
+    if (documentIndex === -1) {
+      return scores;
+    }
+    
+    // Get terms for this specific document
+    const terms = this.tfidf.listTerms(documentIndex);
+    terms.forEach(term => {
+      scores.push({
+        term: term.term,
+        tfidf: term.tfidf,
+        tf: term.tf
+      });
     });
     
     // Sort by TF-IDF score

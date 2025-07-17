@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
 import { program } from 'commander';
+import { getDatabasePath, setupDatabaseCliArgs } from '../extract-xml/database-utils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,21 +25,17 @@ const _defaultSearchFields = [
 
 
 // Parse command line arguments
-program
-  .name('fhir-jira-mcp')
-  .description('FHIR JIRA MCP Server')
-  .option('-p, --port <port>', 'HTTP server port (optional)', parseInt)
-  .parse();
+const options = setupDatabaseCliArgs('fhir-jira-mcp', 'FHIR JIRA MCP Server', {
+  '-p, --port <port>': {
+    description: 'HTTP server port (optional)',
+    defaultValue: undefined
+  }
+});
 
-const options = program.opts();
-
-// Database path - assumes the database is in the parent directory
-const DB_PATHS = [
-  path.join(process.cwd(), 'jira_issues.sqlite'),
-  path.join(process.cwd(), '..', 'jira_issues.sqlite'),
-  path.join(__dirname, 'jira_issues.sqlite'),
-  path.join(__dirname, '..', 'jira_issues.sqlite'),
-];
+// Convert port to number if provided
+if (options.port) {
+  options.port = parseInt(options.port);
+}
 
 class JiraIssuesMCPServer {
   constructor() {
@@ -55,22 +52,11 @@ class JiraIssuesMCPServer {
     this.setupHandlers();
   }
 
-  
-  findDatabasePath() {
-    for (const dbPath of DB_PATHS) {
-      try {
-        if (fs.existsSync(dbPath)) {
-          return dbPath;
-        }
-      } catch (error) { }
-    }
-    throw new Error('jira_issues.sqlite not found in expected locations.');
-  }
 
 
   async init() {
     try {
-      const dbPath = this.findDatabasePath();
+      const dbPath = getDatabasePath();
       this.db = new Database(dbPath, { readonly: true });
       console.error(`Connected to database at ${dbPath}`);
     } catch (error) {

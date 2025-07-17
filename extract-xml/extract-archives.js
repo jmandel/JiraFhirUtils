@@ -29,7 +29,7 @@ async function extractArchive(archivePath, targetDir) {
     
     await execa('mkdir', ['-p', fullTargetDir]);
     
-    await execa('tar', ['-xzf', fullArchivePath, '-C', fullTargetDir]);
+    await execa('tar', ['-xzf', fullArchivePath, '-C', fullTargetDir, '--strip-components=1']);
     
     console.log(`✓ Successfully extracted ${archivePath}`);
     return true;

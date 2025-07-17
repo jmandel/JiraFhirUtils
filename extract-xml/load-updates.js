@@ -4,9 +4,9 @@ import { XMLParser } from "fast-xml-parser";
 import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
+import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
 
 // --- Configuration ---
-const DATABASE_FILE = "jira_issues.sqlite";
 const UPDATE_SUBDIRECTORY = "updates"; // The subdirectory containing your update XML files
 const XML_GLOB_PATTERN = "*.xml";
 
@@ -100,36 +100,39 @@ async function processUpdateFile(filePath, db) {
 
     // Create a transaction function to process each item atomically
     const processItem = db.transaction(item => {
-        if (!item.key || !item.key["#text"]) return;
-        const issueKey = item.key["#text"];
+          const issueKey = item?.key?.["#text"];
+          if (!issueKey || typeof issueKey !== "string"){
+              console.warn(`Skipping item with missing key in ${filePath}: ${item.title || "Unknown Title"}`);
+              return;
+          }
 
         // 1. Upsert the main issue
         upsertIssue.run({
-            $key: issueKey,
-            $id: item.key["@_id"],
-            $title: item.title,
-            $link: item.link,
-            $project_id: item.project?.["@_id"],
-            $project_key: item.project?.["@_key"],
-            $description: item.description,
-            $summary: item.summary,
-            $type: item.type?.["#text"],
-            $type_id: item.type?.["@_id"],
-            $priority: item.priority?.["#text"],
-            $priority_id: item.priority?.["@_id"],
-            $status: item.status?.["#text"],
-            $status_id: item.status?.["@_id"],
-            $status_category_id: item.status?.statusCategory?.["@_id"],
-            $status_category_key: item.status?.statusCategory?.["@_key"],
-            $status_category_color: item.status?.statusCategory?.["@_colorName"],
-            $resolution: item.resolution?.["#text"],
-            $resolution_id: item.resolution?.["@_id"],
-            $assignee: item.assignee?.["@_username"],
-            $reporter: item.reporter?.["@_username"],
-            $created_at: toISO(item.created),
-            $updated_at: toISO(item.updated),
-            $resolved_at: toISO(item.resolved),
-            $watches: Number(item.watches) || 0,
+            key: issueKey,
+            id: item.key["@_id"],
+            title: item.title,
+            link: item.link,
+            project_id: item.project?.["@_id"],
+            project_key: item.project?.["@_key"],
+            description: item.description,
+            summary: item.summary,
+            type: item.type?.["#text"],
+            type_id: item.type?.["@_id"],
+            priority: item.priority?.["#text"],
+            priority_id: item.priority?.["@_id"],
+            status: item.status?.["#text"],
+            status_id: item.status?.["@_id"],
+            status_category_id: item.status?.statusCategory?.["@_id"],
+            status_category_key: item.status?.statusCategory?.["@_key"],
+            status_category_color: item.status?.statusCategory?.["@_colorName"],
+            resolution: item.resolution?.["#text"],
+            resolution_id: item.resolution?.["@_id"],
+            assignee: item.assignee?.["@_username"],
+            reporter: item.reporter?.["@_username"],
+            created_at: toISO(item.created),
+            updated_at: toISO(item.updated),
+            resolved_at: toISO(item.resolved),
+            watches: Number(item.watches) || 0,
         });
 
         // 2. Replace custom fields
@@ -143,11 +146,11 @@ async function processUpdateFile(filePath, db) {
                     : valueNode;
 
                 insertCustomField.run({
-                    $issue_key: issueKey,
-                    $field_id: field["@_id"],
-                    $field_key: field["@_key"],
-                    $field_name: field.customfieldname,
-                    $field_value: value,
+                    issue_key: issueKey,
+                    field_id: field["@_id"],
+                    field_key: field["@_key"],
+                    field_name: field.customfieldname,
+                    field_value: value,
                 });
             }
         }
@@ -157,11 +160,11 @@ async function processUpdateFile(filePath, db) {
         if (comments) {
             for(const comment of comments) {
                 insertComment.run({
-                    $comment_id: comment["@_id"],
-                    $issue_key: issueKey,
-                    $author: comment["@_author"],
-                    $created_at: toISO(comment["@_created"]),
-                    $body: comment["#text"],
+                    comment_id: comment["@_id"],
+                    issue_key: issueKey,
+                    author: comment["@_author"],
+                    created_at: toISO(comment["@_created"]),
+                    body: comment["#text"],
                 });
             }
         }
@@ -184,36 +187,50 @@ async function processUpdateFile(filePath, db) {
 async function main() {
   console.log("Starting JIRA XML update process...");
 
+  // Setup CLI arguments
+  const options = setupDatabaseCliArgs('load-updates', 'Load JIRA XML updates into SQLite database', {
+    '--update-dir <dir>': {
+      description: 'Directory containing update XML files',
+      defaultValue: UPDATE_SUBDIRECTORY
+    }
+  });
+
+  const databasePath = getDatabasePath();
+  const updateDir = options.updateDir || UPDATE_SUBDIRECTORY;
+  
+  console.log(`Using database: ${databasePath}`);
+  console.log(`Update directory: ${updateDir}`);
+
   // Guard: Check if database file exists
-  if (!fs.existsSync(DATABASE_FILE)) {
-    console.error(`Error: Database file '${DATABASE_FILE}' not found.`);
+  if (!fs.existsSync(databasePath)) {
+    console.error(`Error: Database file '${databasePath}' not found.`);
     console.error("Please run the initial import script first.");
     return;
   }
 
   // Guard: Check if update directory exists
-  const updatePath = path.join(process.cwd(), UPDATE_SUBDIRECTORY);
+  const updatePath = path.join(process.cwd(), updateDir).replace(/\\/g, '/');
   if (!fs.existsSync(updatePath)) {
-    console.error(`Error: Update directory '${UPDATE_SUBDIRECTORY}' not found.`);
+    console.error(`Error: Update directory '${updateDir}' not found.`);
     return;
   }
 
-  const db = new Database(DATABASE_FILE);
+  const db = new Database(databasePath);
   db.exec("PRAGMA journal_mode = WAL;");
 
-  const pattern = path.join(updatePath, XML_GLOB_PATTERN);
+  const pattern = path.join(updatePath, XML_GLOB_PATTERN).replace(/\\/g, '/');
   const files = await glob(pattern, { nodir: true });
 
   if (files.length === 0) {
-    console.log(`No XML files found in subdirectory '${UPDATE_SUBDIRECTORY}'.`);
+    console.log(`No XML files found in subdirectory '${updateDir}'.`);
     db.close();
     return;
   }
 
-  console.log(`Found ${files.length} XML files to process in '${UPDATE_SUBDIRECTORY}'.`);
+  console.log(`Found ${files.length} XML files to process in '${updateDir}'.`);
 
   for (const filePath of files) {
-    await processUpdateFile(filePath, db);
+    await processUpdateFile(filePath.replace(/\\/g, '/'), db);
   }
 
   db.close();

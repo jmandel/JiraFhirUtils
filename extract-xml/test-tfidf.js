@@ -1,11 +1,18 @@
 import { KeywordUtils } from "./keyword-utils.js";
 import Database from "better-sqlite3";
+import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
 
 // Test the TF-IDF implementation
 async function testTFIDF() {
   console.log("Testing TF-IDF implementation...\n");
   
-  const db = new Database("./jira_issues.sqlite");
+  // Setup CLI arguments
+  const options = setupDatabaseCliArgs('test-tfidf', 'Test TF-IDF implementation and keyword utilities');
+  
+  const databasePath = getDatabasePath();
+  console.log(`Using database: ${databasePath}`);
+  
+  const db = new Database(databasePath);
   
   try {
     // Check if TF-IDF tables exist
@@ -28,7 +35,7 @@ async function testTFIDF() {
     console.log(`\n📊 Total unique keywords: ${keywordCount.count}`);
     
     // Test KeywordUtils
-    const utils = new KeywordUtils();
+    const utils = new KeywordUtils(databasePath);
     
     // Get statistics
     console.log("\n📈 Keyword Statistics:");

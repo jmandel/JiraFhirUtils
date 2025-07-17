@@ -2,8 +2,7 @@
 
 import Database from "better-sqlite3";
 import { existsSync } from "fs";
-
-const DB_FILE = "jira_issues.sqlite";
+import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
 
 function setupFTS5Tables(db) {
     console.log("Dropping and creating FTS5 tables...");
@@ -163,13 +162,21 @@ function populateCommentsFTS(db) {
 }
 
 async function main() {
-    if (!existsSync(DB_FILE)) {
-        console.error(`Error: Database file '${DB_FILE}' not found.`);
+    console.log("Creating FTS5 tables for JIRA issues...\n");
+    
+    // Setup CLI arguments
+    const options = setupDatabaseCliArgs('create-fts', 'Create FTS5 search tables for JIRA issues');
+    
+    const databasePath = getDatabasePath();
+    console.log(`Using database: ${databasePath}`);
+    
+    if (!existsSync(databasePath)) {
+        console.error(`Error: Database file '${databasePath}' not found.`);
         console.error("Please run load-initial.js first to create the database.");
         process.exit(1);
     }
     
-    const db = new Database(DB_FILE);
+    const db = new Database(databasePath);
     
     try {
         db.exec("PRAGMA journal_mode = WAL;");

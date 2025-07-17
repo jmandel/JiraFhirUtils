@@ -54,22 +54,16 @@ function createTFIDFTables(db) {
 function loadIssues(db, offset = 0, limit = BATCH_SIZE) {
   const query = `
     SELECT 
-      i.key,
+      i.issue_key,
       i.title,
       i.description,
       i.summary,
-      i.resolution,
-      GROUP_CONCAT(
-        CASE 
-          WHEN cf.field_name IN ('Resolution Description', 'Work Group', 'Change Category')
-          THEN cf.field_value 
-          ELSE NULL 
-        END, ' '
-      ) as custom_text
-    FROM issues i
-    LEFT JOIN custom_fields cf ON i.key = cf.issue_key
-    GROUP BY i.key
-    ORDER BY i.key
+      i.resolution_description,
+      GROUP_CONCAT(c.body) as comments
+    FROM issues_fts i
+    LEFT JOIN comments c ON i.issue_key = c.issue_key
+    GROUP BY i.issue_key
+    ORDER BY i.issue_key
     LIMIT ? OFFSET ?
   `;
   
@@ -83,37 +77,40 @@ function countIssues(db) {
 }
 
 // Process TF-IDF for all issues
-async function processTFIDF(db) {
+async function processTFIDF(db, batchSize = BATCH_SIZE, topKeywords = TOP_KEYWORDS_PER_ISSUE) {
   const processor = new TFIDFProcessor();
   const totalIssues = countIssues(db);
   
   console.log(`Total issues to process: ${totalIssues}`);
-  console.log(`Processing in batches of ${BATCH_SIZE}...`);
+  console.log(`Processing in batches of ${batchSize}...`);
   
   // Load all issues and build corpus
   let processedCount = 0;
   const allIssues = [];
   
   while (processedCount < totalIssues) {
-    const batch = loadIssues(db, processedCount, BATCH_SIZE);
+    const batch = loadIssues(db, processedCount, batchSize);
     
     if (batch.length === 0) break;
     
     // Process each issue in the batch
     batch.forEach(issue => {
-      // Combine all text fields
+      // Combine all text fields with explicit null handling
       const text = [
-        issue.title,
-        issue.description,
-        issue.summary,
-        issue.resolution,
-        issue.custom_text
-      ].filter(Boolean).join(' ');
+        issue.title || '',
+        issue.description || '',
+        issue.summary || '',
+        issue.resolution_description || '',
+        issue.comments || ''
+      ].filter(str => str.trim().length > 0).join(' ');
       
-      allIssues.push({
-        key: issue.key,
-        text: text
-      });
+      // Only add issues with actual text content
+      if (text.trim().length > 0) {
+        allIssues.push({
+          key: issue.issue_key,
+          text: text
+        });
+      }
     });
     
     processedCount += batch.length;
@@ -123,15 +120,15 @@ async function processTFIDF(db) {
   // Build the corpus
   console.log("\nBuilding TF-IDF corpus...");
   processor.buildCorpus(allIssues.map(issue => ({
-    key: issue.key,
+    key: issue.issue_key,
     title: issue.text // Using combined text
   })));
   
   console.log("Corpus built successfully.");
   
   // Extract keywords for all documents
-  console.log(`\nExtracting top ${TOP_KEYWORDS_PER_ISSUE} keywords per issue...`);
-  const keywordsData = processor.exportKeywordsForDB(TOP_KEYWORDS_PER_ISSUE);
+  console.log(`\nExtracting top ${topKeywords} keywords per issue...`);
+  const keywordsData = processor.exportKeywordsForDB(topKeywords);
   const corpusStats = processor.exportCorpusStatsForDB();
   
   // Store results in database
@@ -235,6 +232,7 @@ async function main() {
     createTFIDFTables(db);
     
     // Process TF-IDF
+    // await processTFIDF(db, batchSize, topKeywords);
     await processTFIDF(db);
     
   } catch (error) {

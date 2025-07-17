@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
+    "commander": "^14.0.0",
     "execa": "^9.5.2",
     "fast-xml-parser": "^4.5.1",
     "glob": "^11.0.0",

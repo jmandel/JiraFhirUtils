@@ -1,8 +1,10 @@
 import Database from "better-sqlite3";
+import { getDatabasePath } from "./database-utils.js";
 
 export class KeywordUtils {
-  constructor(dbPath = "./jira_issues.sqlite") {
-    this.db = new Database(dbPath);
+  constructor(dbPath = null) {
+    const databasePath = dbPath || getDatabasePath();
+    this.db = new Database(databasePath);
   }
 
   /**
@@ -290,22 +292,22 @@ export class KeywordUtils {
 }
 
 // Export convenience functions
-export function getIssueKeywords(issueKey, limit = 10) {
-  const utils = new KeywordUtils();
+export function getIssueKeywords(issueKey, limit = 10, dbPath = null) {
+  const utils = new KeywordUtils(dbPath);
   const results = utils.getIssueKeywords(issueKey, limit);
   utils.close();
   return results;
 }
 
-export function findSimilarIssues(issueKey, limit = 10) {
-  const utils = new KeywordUtils();
+export function findSimilarIssues(issueKey, limit = 10, dbPath = null) {
+  const utils = new KeywordUtils(dbPath);
   const results = utils.findSimilarIssues(issueKey, limit);
   utils.close();
   return results;
 }
 
-export function searchByKeywords(keywords, limit = 20) {
-  const utils = new KeywordUtils();
+export function searchByKeywords(keywords, limit = 20, dbPath = null) {
+  const utils = new KeywordUtils(dbPath);
   const results = utils.searchByKeywords(keywords, limit);
   utils.close();
   return results;

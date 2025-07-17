@@ -90,6 +90,53 @@ npm install
 
 The scripts expect the relevant XML files to be present in their respective directories (`bulk` for initial load, `updates` for updates). The database file is named `jira_issues.sqlite` and will be created or updated in the current working directory.
 
+## Database Path Configuration
+
+All extract-xml scripts now use a unified database path resolution system that supports:
+
+1. **Explicit database path** via `--db-path` command-line option
+2. **Automatic discovery** in these locations (in order):
+   - Current working directory: `./jira_issues.sqlite`
+   - Parent directory: `../jira_issues.sqlite`
+   - Script directory: `<script-dir>/jira_issues.sqlite`
+   - Script parent directory: `<script-dir>/../jira_issues.sqlite`
+
+### Command-Line Options
+
+All scripts support these common options:
+
+```sh
+# Use explicit database path
+node extract-xml/load-initial.js --db-path /path/to/custom/database.sqlite
+
+# Check if database exists without running the script
+node extract-xml/load-initial.js --db-check
+
+# Show help
+node extract-xml/load-initial.js --help
+```
+
+### Script-Specific Options
+
+- **load-initial.js**: `--initial-dir <dir>` - Custom initial XML directory (default: `bulk`)
+- **load-updates.js**: `--update-dir <dir>` - Custom update XML directory (default: `updates`)
+- **create-tfidf.js**: 
+  - `--batch-size <size>` - Processing batch size (default: 1000)
+  - `--top-keywords <count>` - Keywords per issue (default: 15)
+
+### Examples
+
+```sh
+# Load initial data from custom directory with custom database
+node extract-xml/load-initial.js --db-path ./custom.sqlite --initial-dir ./my-bulk-data
+
+# Create TF-IDF with custom settings
+node extract-xml/create-tfidf.js --db-path ./prod.sqlite --batch-size 500 --top-keywords 20
+
+# Check if database exists before processing
+node extract-xml/create-fts.js --db-check
+```
+
 ## fhir-jira-mcp
 
 This folder contains a Model Context Protocol (MCP) server that provides read-only access to the JIRA issues SQLite database. The server enables browsing work queues and searching for related tickets through various tools.
@@ -108,4 +155,17 @@ npm start  # For stdio mode (Claude Desktop)
 npm run start:http  # For HTTP mode on port 3000
 ```
 
-The server operates in read-only mode for database safety and expects the `jira_issues.sqlite` database to exist in the parent directory. See the [fhir-jira-mcp README](fhir-jira-mcp/README.md) for detailed configuration and usage instructions, including Claude Desktop integration and HTTP API documentation.
+The MCP server now uses the same unified database path resolution system as the extract-xml scripts:
+
+```sh
+# Use explicit database path
+node fhir-jira-mcp/index.js --db-path /path/to/custom/database.sqlite
+
+# Start HTTP server on custom port with custom database
+node fhir-jira-mcp/index.js --db-path ./prod.sqlite --port 8080
+
+# Check database connectivity
+node fhir-jira-mcp/index.js --db-check
+```
+
+The server operates in read-only mode for database safety and will automatically discover the database file using the same fallback locations as the extract-xml scripts. See the [fhir-jira-mcp README](fhir-jira-mcp/README.md) for detailed configuration and usage instructions, including Claude Desktop integration and HTTP API documentation.

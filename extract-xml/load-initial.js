@@ -4,9 +4,9 @@ import { XMLParser } from "fast-xml-parser";
 import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
+import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
 
 // --- Configuration ---
-const DATABASE_FILE = "jira_issues.sqlite";
 const INITIAL_SUBDIRECTORY = "bulk"; // The subdirectory containing the initial XML files
 const XML_GLOB_PATTERN = "*.xml";
 
@@ -17,7 +17,7 @@ const XML_GLOB_PATTERN = "*.xml";
  * @param {Database} db - The database instance.
  */
 function setupDatabase(db) {
-  console.log(`Initializing database '${DATABASE_FILE}'...`);
+  console.log(`Initializing database...`);
   db.exec("PRAGMA journal_mode = WAL;"); // for better performance and concurrency
 
   // Main table for JIRA issues
@@ -142,34 +142,38 @@ async function processXmlFile(filePath, db) {
     // Use a transaction for bulk inserts from a single file
     const insertAll = db.transaction(items => {
         for (const item of items) {
-            if (!item.key || !item.key["#text"]) continue;
+            const issueKey = item?.key?.["#text"];
+            if (!issueKey || typeof issueKey !== "string"){
+                console.warn(`Skipping item with missing key in ${filePath}: ${item.title || "Unknown Title"}`);
+                continue;
+            }
 
             insertIssue.run({
-                $key: item.key["#text"],
-                $id: item.key["@_id"],
-                $title: item.title,
-                $link: item.link,
-                $project_id: item.project?.["@_id"],
-                $project_key: item.project?.["@_key"],
-                $description: item.description,
-                $summary: item.summary,
-                $type: item.type?.["#text"],
-                $type_id: item.type?.["@_id"],
-                $priority: item.priority?.["#text"],
-                $priority_id: item.priority?.["@_id"],
-                $status: item.status?.["#text"],
-                $status_id: item.status?.["@_id"],
-                $status_category_id: item.status?.statusCategory?.["@_id"],
-                $status_category_key: item.status?.statusCategory?.["@_key"],
-                $status_category_color: item.status?.statusCategory?.["@_colorName"],
-                $resolution: item.resolution?.["#text"],
-                $resolution_id: item.resolution?.["@_id"],
-                $assignee: item.assignee?.["@_username"],
-                $reporter: item.reporter?.["@_username"],
-                $created_at: toISO(item.created),
-                $updated_at: toISO(item.updated),
-                $resolved_at: toISO(item.resolved),
-                $watches: Number(item.watches) || 0,
+                key: issueKey,
+                id: item.key["@_id"],
+                title: item.title,
+                link: item.link,
+                project_id: item.project?.["@_id"],
+                project_key: item.project?.["@_key"],
+                description: item.description,
+                summary: item.summary,
+                type: item.type?.["#text"],
+                type_id: item.type?.["@_id"],
+                priority: item.priority?.["#text"],
+                priority_id: item.priority?.["@_id"],
+                status: item.status?.["#text"],
+                status_id: item.status?.["@_id"],
+                status_category_id: item.status?.statusCategory?.["@_id"],
+                status_category_key: item.status?.statusCategory?.["@_key"],
+                status_category_color: item.status?.statusCategory?.["@_colorName"],
+                resolution: item.resolution?.["#text"],
+                resolution_id: item.resolution?.["@_id"],
+                assignee: item.assignee?.["@_username"],
+                reporter: item.reporter?.["@_username"],
+                created_at: toISO(item.created),
+                updated_at: toISO(item.updated),
+                resolved_at: toISO(item.resolved),
+                watches: Number(item.watches) || 0,
             });
 
             // Process custom fields
@@ -185,11 +189,11 @@ async function processXmlFile(filePath, db) {
                     }
 
                     insertCustomField.run({
-                        $issue_key: item.key["#text"],
-                        $field_id: field["@_id"],
-                        $field_key: field["@_key"],
-                        $field_name: field.customfieldname,
-                        $field_value: value,
+                        issue_key: item.key["#text"],
+                        field_id: field["@_id"],
+                        field_key: field["@_key"],
+                        field_name: field.customfieldname,
+                        field_value: value,
                     });
                 }
             }
@@ -199,11 +203,11 @@ async function processXmlFile(filePath, db) {
             if (comments) {
                 for(const comment of comments) {
                     insertComment.run({
-                        $comment_id: comment["@_id"],
-                        $issue_key: item.key["#text"],
-                        $author: comment["@_author"],
-                        $created_at: toISO(comment["@_created"]),
-                        $body: comment["#text"],
+                        comment_id: comment["@_id"],
+                        issue_key: item.key["#text"],
+                        author: comment["@_author"],
+                        created_at: toISO(comment["@_created"]),
+                        body: comment["#text"],
                     });
                 }
             }
@@ -224,21 +228,41 @@ async function processXmlFile(filePath, db) {
 async function main() {
   console.log("Starting JIRA XML to SQLite import process...");
 
-  const db = new Database(DATABASE_FILE);
+  // Setup CLI arguments
+  const options = setupDatabaseCliArgs('load-initial', 'Load initial JIRA XML files into SQLite database', {
+    '--initial-dir <dir>': {
+      description: 'Directory containing initial XML files',
+      defaultValue: INITIAL_SUBDIRECTORY
+    }
+  });
+
+  let databasePath;
+  try {
+    databasePath = getDatabasePath();
+  } catch (error) {
+    databasePath = path.join(process.cwd(), 'jira_issues.sqlite').replace(/\\/g, '/');
+  }
+  
+  const initialDir = options.initialDir || INITIAL_SUBDIRECTORY;
+  
+  console.log(`Using database: ${databasePath}`);
+  console.log(`Initial directory: ${initialDir}`);
+
+  const db = new Database(databasePath);
   setupDatabase(db);
 
-    // Guard: Check if initial directory exists
-    const initialPath = path.join(process.cwd(), INITIAL_SUBDIRECTORY);
-    if (!fs.existsSync(initialPath)) {
-      console.error(`Error: Initial content directory '${INITIAL_SUBDIRECTORY}' not found.`);
-      return;
-    }
-  
-  const pattern = path.join(initialPath, XML_GLOB_PATTERN);
+  // Guard: Check if initial directory exists
+  const initialPath = path.join(process.cwd(), initialDir).replace(/\\/g, '/');
+  if (!fs.existsSync(initialPath)) {
+    console.error(`Error: Initial content directory '${initialDir}' not found.`);
+    return;
+  }
+
+  const pattern = path.join(initialPath, XML_GLOB_PATTERN).replace(/\\/g, '/');
   const files = await glob(pattern, { nodir: true });
 
   if (files.length === 0) {
-    console.log(`No XML files found matching pattern '${XML_GLOB_PATTERN}' in subdirectory '${INITIAL_SUBDIRECTORY}'.`);
+    console.log(`No XML files found matching pattern '${XML_GLOB_PATTERN}' in subdirectory '${initialDir}'.`);
     db.close();
     return;
   }
@@ -246,7 +270,7 @@ async function main() {
   console.log(`Found ${files.length} XML files to process.`);
 
   for (const filePath of files) {
-    await processXmlFile(filePath, db);
+    await processXmlFile(filePath.replace(/\\/g, '/'), db);
   }
 
   db.close();

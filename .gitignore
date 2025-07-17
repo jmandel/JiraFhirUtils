@@ -13,8 +13,8 @@
 *.local.*
 
 # Ignore uncompressed XML files
-extract-xml/bulk
-extract-xml/updates
+/bulk
+/updates
 
 # Ignore SQLite files
 *.sqlite-shm
