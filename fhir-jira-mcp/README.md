@@ -114,10 +114,12 @@ curl -X POST http://localhost:3000/mcp \
   }'
 ```
 
-## Available Tools
+## Available MCP Tools
 
-### 1. list_issues
-List issues with filtering options.
+The FHIR JIRA MCP server provides the following tools for interacting with the JIRA issues database:
+
+### 1. `list_issues`
+**Description:** List issues filtered by project_key, work_group, resolution, status, and/or assignee
 
 **Parameters:**
 - `project_key` (optional): Filter by project key
@@ -140,12 +142,12 @@ List issues with filtering options.
 }
 ```
 
-### 2. search_issues
-Search for tickets using full-text search.
+### 2. `search_issues`
+**Description:** Search for tickets using SQLite FTS5 testing against issue fields
 
 **Parameters:**
 - `query` (required): Search query string
-- `search_fields` (optional): Array of fields to search in. Options: `related_url`, `related_artifacts`, `related_pages`, `title`, `summary`. Defaults to all fields.
+- `search_fields` (optional): Array of fields to search in. Options: `title`, `description`, `summary`, `resolution_description`. Defaults to all fields.
 - `limit` (optional): Maximum number of results (default: 50)
 
 **Example:**
@@ -160,8 +162,28 @@ Search for tickets using full-text search.
 }
 ```
 
-### 3. get_issue_details
-Get detailed information about a specific issue.
+### 3. `find_related_issues`
+**Description:** Find issues related to a specific issue by key, using FTS5 for efficient searching
+
+**Parameters:**
+- `issue_key` (required): The issue key to find related issues for
+- `keywords` (optional): Keywords to search for in related issues
+- `limit` (optional): Maximum number of results (default: 50)
+
+**Example:**
+```json
+{
+  "tool": "find_related_issues",
+  "arguments": {
+    "issue_key": "FHIR-123",
+    "keywords": "patient observation",
+    "limit": 10
+  }
+}
+```
+
+### 4. `get_issue_details`
+**Description:** Get detailed information about a specific issue by key
 
 **Parameters:**
 - `issue_key` (required): The issue key (e.g., "FHIR-123")
@@ -176,8 +198,8 @@ Get detailed information about a specific issue.
 }
 ```
 
-### 4. get_issue_comments
-Get all comments for a specific issue.
+### 5. `get_issue_comments`
+**Description:** Get comments for a specific issue
 
 **Parameters:**
 - `issue_key` (required): The issue key (e.g., "FHIR-123")
@@ -192,8 +214,8 @@ Get all comments for a specific issue.
 }
 ```
 
-### 5. list_project_keys
-List all unique project keys in the database.
+### 6. `list_project_keys`
+**Description:** List all unique project keys in the database
 
 **Parameters:** None
 
@@ -205,8 +227,8 @@ List all unique project keys in the database.
 }
 ```
 
-### 6. list_work_groups
-List all unique work groups in the database.
+### 7. `list_work_groups`
+**Description:** List all unique work groups in the database
 
 **Parameters:** None
 

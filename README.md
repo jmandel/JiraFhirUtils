@@ -10,6 +10,7 @@ This folder contains utilities to create a SQLite database based on Jira tickets
 * `load-initial.js` loads the contents of the `bulk` directory, creates a database, and assumes no duplicates/conflicts
 * `load-updates.js` loads the contents of the `updates` directory into the database, updating existing records if they exist or adding new records if they do not
 * `create-fts.js` creates SQLite FTS5 full-text search tables for `issues` and `comments` from the database.
+* `create-tfidf.js` extracts TF-IDF data from Jira issues.
 * `bulk.tar.gz` contains FHIR Core tickets FHIR-2839 through FHIR-51487, as of 2025.07.15
 * `updates.tar.gz` contains FHIR Core tickets that have changes on 2025.07.15
 
@@ -54,6 +55,33 @@ This folder contains utilities to create a SQLite database based on Jira tickets
   - Search comments: `SELECT * FROM comments_fts WHERE comments_fts MATCH 'search term'`
   - Phrase search: `SELECT * FROM issues_fts WHERE issues_fts MATCH '"exact phrase"'`
   - Field-specific: `SELECT * FROM issues_fts WHERE title MATCH 'search term'`
+
+- **create-tfidf.js**
+  This script implements TF-IDF (Term Frequency-Inverse Document Frequency) keyword extraction from JIRA issues. It analyzes text content from issue titles, descriptions, summaries, and custom fields to identify the most relevant keywords for each issue. The implementation includes FHIR-specific processing to preserve domain terminology.
+  **Run with:**
+  ```sh
+  npm run create-tfidf
+  # or
+  node extract-xml/create-tfidf.js
+  ```
+  The script will:
+  - Create new database tables (`tfidf_keywords` and `tfidf_corpus_stats`)
+  - Process all issues in batches to extract keywords
+  - Calculate TF-IDF scores for each keyword per issue
+  - Store results for fast keyword-based search and similarity analysis
+  
+  Features:
+  - Extracts top 15 keywords per issue by default
+  - Preserves FHIR resource names (Patient, Observation, etc.)
+  - Recognizes version identifiers (R4, R5, STU3)
+  - Filters common stopwords while keeping technical terms
+  - Enables finding similar issues based on keyword overlap
+  
+  Example uses after setup:
+  - Find keywords for an issue: Query `tfidf_keywords` table
+  - Search issues by keywords: Use keyword matching queries
+  - Find similar issues: Compare keyword vectors
+  - Analyze keyword trends: Group by time periods
 
 Scripts require Node.js (v14 or higher) and npm. First install dependencies:
 ```sh

@@ -7,15 +7,17 @@
     "extract-archives": "node extract-xml/extract-archives.js",
     "load-initial": "node extract-xml/load-initial.js",
     "load-updates": "node extract-xml/load-updates.js",
-    "create-fts": "node extract-xml/create-fts.js"
+    "create-fts": "node extract-xml/create-fts.js",
+    "create-tfidf": "node extract-xml/create-tfidf.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
     "execa": "^9.5.2",
     "fast-xml-parser": "^4.5.1",
-    "glob": "^11.0.0"
+    "glob": "^11.0.0",
+    "natural": "^8.1.0",
+    "stopword": "^3.1.5"
   },
-  "devDependencies": {},
   "keywords": [
     "jira",
     "fhir",
