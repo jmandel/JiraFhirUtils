@@ -2,11 +2,18 @@ import natural from 'natural';
 import { removeStopwords } from 'stopword';
 
 export class TFIDFProcessor {
-  constructor() {
+  constructor(options = {}) {
     this.tokenizer = new natural.WordTokenizer();
     this.tfidf = new natural.TfIdf();
     this.documents = new Map();
     this.corpusStats = new Map();
+    this.stemmer = natural.PorterStemmer;
+    
+    // Configuration options
+    this.minDocumentFrequency = options.minDocumentFrequency || 2; // Term must appear in at least 2 documents
+    this.maxDocumentFrequency = options.maxDocumentFrequency || 0.5; // Term must appear in at most 50% of documents
+    this.minTermLength = options.minTermLength || 2;
+    this.maxTermLength = options.maxTermLength || 30;
   }
 
   /**
@@ -15,23 +22,77 @@ export class TFIDFProcessor {
   preprocessText(text) {
     if (!text) return [];
     
+    // Clean text before tokenization
+    const cleanedText = this.cleanText(text);
+    
     // Tokenize
-    let tokens = this.tokenizer.tokenize(text.toLowerCase());
+    let tokens = this.tokenizer.tokenize(cleanedText.toLowerCase());
     
     // Remove stopwords
     tokens = removeStopwords(tokens);
     
-    // Filter out short tokens and numbers
-    tokens = tokens.filter(token => 
-      token.length > 2 && 
-      !/^\d+$/.test(token) &&
-      !/^[^a-z0-9]+$/i.test(token)
-    );
+    // Enhanced filtering for better token quality
+    tokens = tokens.filter(token => this.isValidToken(token));
     
     // Add FHIR-specific preprocessing
     tokens = this.processFHIRTerms(tokens);
     
+    // Apply stemming to reduce words to their root forms
+    tokens = this.applyStemming(tokens);
+    
     return tokens;
+  }
+
+  /**
+   * Clean text by removing HTML entities, special characters, and normalizing whitespace
+   */
+  cleanText(text) {
+    try {
+      if (!text || typeof text !== 'string') {
+        return '';
+      }
+      
+      // Handle very large text by truncating
+      if (text.length > 50000) {
+        text = text.substring(0, 50000);
+      }
+      
+      return text
+        // Remove HTML entities
+        .replace(/&[a-zA-Z]+;/g, ' ')
+        // Remove HTML tags
+        .replace(/<[^>]*>/g, ' ')
+        // Replace multiple whitespace with single space
+        .replace(/\s+/g, ' ')
+        // Remove special characters but keep hyphens and underscores for technical terms
+        .replace(/[^\w\s\-_.]/g, ' ')
+        .trim();
+    } catch (error) {
+      console.warn(`Error cleaning text: ${error.message}`);
+      return '';
+    }
+  }
+
+  /**
+   * Check if a token is valid for inclusion in the corpus
+   */
+  isValidToken(token) {
+    // Check length constraints
+    if (token.length < this.minTermLength || token.length > this.maxTermLength) return false;
+    
+    // Skip pure numbers
+    if (/^\d+$/.test(token)) return false;
+    
+    // Skip tokens that are only special characters
+    if (/^[^a-z0-9]+$/i.test(token)) return false;
+    
+    // Skip common meaningless tokens
+    if (['http', 'https', 'www', 'com', 'org', 'net'].includes(token)) return false;
+    
+    // Keep tokens with alphanumeric characters
+    if (/[a-z0-9]/i.test(token)) return true;
+    
+    return false;
   }
 
   /**
@@ -39,19 +100,24 @@ export class TFIDFProcessor {
    */
   processFHIRTerms(tokens) {
     return tokens.map(token => {
-      // Preserve FHIR resource names
-      if (token.match(/^(patient|observation|procedure|condition|medication|encounter|practitioner|organization|device|diagnostic|immunization|allergyintolerance|careplan|careteam|goal)$/i)) {
+      // Preserve FHIR resource names (expanded list)
+      if (token.match(/^(patient|observation|procedure|condition|medication|encounter|practitioner|organization|device|diagnostic|immunization|allergyintolerance|careplan|careteam|goal|location|endpoint|healthcareservice|schedule|slot|appointment|bundle|composition|documentreference|binary|media|list|library|measure|questionnaire|questionnaireresponse|subscription|communication|communicationrequest|claim|claimresponse|coverage|eligibilityrequest|eligibilityresponse|enrollmentrequest|enrollmentresponse|explanationofbenefit|paymentnotice|paymentreconciliation|valueSet|codesystem|conceptmap|structuredefinition|implementationguide|searchparameter|operationdefinition|conformance|capabilitystatement|structuremap|graphdefinition|messagedefinition|eventdefinition|activitydefinition|plandefinition|task|provenance|auditEvent|consent|contract|person|relatedperson|group|bodystructure|substance|substancespecification|substanceprotein|substancereferenceinformation|substancesourcematerial|medicationknowledge|medicationrequest|medicationadministration|medicationdispense|medicationstatement|detectedissue|adverseevent|researchstudy|researchsubject|riskassessment|clinicalimpression|flag|familymemberhistory|molecularsequence|imagingstudy|diagnosticreport|specimen|bodysite|imagingmanifest|imagingobjectselection|imagingexcerpt|medicinalproduct|medicinalproductauthorization|medicinalproductcontraindication|medicinalproductindication|medicinalproductingredient|medicinalproductinteraction|medicinalproductmanufactured|medicinalproductpackaged|medicinalproductpharmaceutical|medicinalproductundesirableeffect|devicedefinition|devicemetric|devicecomponent|deviceuserequest|deviceusestatement|devicerequest|supplyrequest|supplydelivery|inventoryreport|linkage|requestgroup|nutritionorder|visionprescription|invoice|account|chargeitem|chargeitemdefinition|contract|person|relatedperson|group)$/i)) {
         return token.toUpperCase();
       }
       
       // Preserve version identifiers
-      if (token.match(/^(r4|r5|stu3|dstu2)$/i)) {
+      if (token.match(/^(r4|r5|stu3|dstu2|r4b|r3)$/i)) {
         return token.toUpperCase();
       }
       
       // Preserve common FHIR operations
-      if (token.match(/^\$(expand|validate|lookup|subsumes|compose|translate)$/)) {
+      if (token.match(/^\$(expand|validate|lookup|subsumes|compose|translate|populate|extract|document|transform|closure|conforms|member-match|lastn|stats|snapshot|diff|apply|meta|meta-add|meta-delete|process-message|convert|graphql|evaluate|evaluate-measure|collect|submit|batch|transaction|history|search|update|patch|delete|create|read|vread|capabilities|batch)$/)) {
         return token;
+      }
+      
+      // Preserve FHIR data types
+      if (token.match(/^(string|boolean|integer|decimal|uri|url|canonical|base64binary|instant|date|datetime|time|code|oid|id|markdown|unsignedint|positiveint|uuid|identifier|humanname|address|contactpoint|timing|duration|period|range|ratio|sampleddata|attachment|coding|codeableconcept|quantity|money|age|count|distance|signature|annotation|reference|narrative|extension|dosage|contactdetail|contributor|datarequirement|parameterdefinition|relatedartifact|triggerdefinition|usagecontext|meta|element|resource|domainresource|backboneelement|primitivetype|element)$/i)) {
+        return token.toUpperCase();
       }
       
       return token;
@@ -59,19 +125,65 @@ export class TFIDFProcessor {
   }
 
   /**
+   * Apply stemming to tokens, preserving certain technical terms
+   */
+  applyStemming(tokens) {
+    return tokens.map(token => {
+      // Don't stem FHIR resource names or version identifiers (already uppercase)
+      if (token === token.toUpperCase() && token.length > 1) {
+        return token;
+      }
+      
+      // Don't stem operations that start with $
+      if (token.startsWith('$')) {
+        return token;
+      }
+      
+      // Don't stem URLs, UUIDs, or other technical identifiers
+      if (token.includes('-') || token.includes('.') || token.includes('_')) {
+        return token;
+      }
+      
+      // Apply Porter stemming to regular words
+      return this.stemmer.stem(token);
+    });
+  }
+
+  /**
    * Add a document to the corpus
    */
   addDocument(id, text, metadata = {}) {
-    const tokens = this.preprocessText(text);
-    const tokenString = tokens.join(' ');
-    
-    this.documents.set(id, {
-      original: text,
-      tokens: tokens,
-      metadata: metadata
-    });
-    
-    this.tfidf.addDocument(tokenString, id);
+    try {
+      if (!id || typeof id !== 'string') {
+        throw new Error('Document ID must be a non-empty string');
+      }
+      
+      if (this.documents.has(id)) {
+        console.warn(`Document with ID '${id}' already exists, skipping`);
+        return;
+      }
+      
+      const tokens = this.preprocessText(text);
+      
+      // Skip documents with no meaningful tokens
+      if (tokens.length === 0) {
+        console.warn(`Document '${id}' has no meaningful tokens, skipping`);
+        return;
+      }
+      
+      const tokenString = tokens.join(' ');
+      
+      this.documents.set(id, {
+        original: text,
+        tokens: tokens,
+        metadata: metadata
+      });
+      
+      this.tfidf.addDocument(tokenString, id);
+    } catch (error) {
+      console.error(`Error adding document '${id}': ${error.message}`);
+      // Continue processing other documents
+    }
   }
 
   /**
@@ -84,6 +196,42 @@ export class TFIDFProcessor {
     });
     
     this.calculateCorpusStats();
+  }
+
+  /**
+   * Build corpus from documents in streaming fashion to handle large datasets
+   */
+  buildCorpusStreaming(documentBatches, batchSize = 1000) {
+    let totalProcessed = 0;
+    
+    for (const batch of documentBatches) {
+      // Process batch
+      batch.forEach(doc => {
+        const text = this.combineTextFields(doc);
+        this.addDocument(doc.key || doc.id, text, doc);
+      });
+      
+      totalProcessed += batch.length;
+      
+      // Periodic memory cleanup and progress reporting
+      if (totalProcessed % (batchSize * 10) === 0) {
+        this.performMemoryCleanup();
+        console.log(`Processed ${totalProcessed} documents...`);
+      }
+    }
+    
+    console.log(`Total documents processed: ${totalProcessed}`);
+    this.calculateCorpusStats();
+  }
+
+  /**
+   * Perform memory cleanup by removing unused references
+   */
+  performMemoryCleanup() {
+    // Force garbage collection hint
+    if (global.gc) {
+      global.gc();
+    }
   }
 
   /**
@@ -120,13 +268,22 @@ export class TFIDFProcessor {
       return scores;
     }
     
+    // Check if document exists
+    if (!this.documents.has(documentId)) {
+      return scores;
+    }
+    
     // Find the document index for this documentId
+    // The natural.TfIdf library uses array indices, so we need to find the position
     let documentIndex = -1;
-    this.documents.forEach((doc, index) => {
-      if (doc.key === documentId) {
-        documentIndex = index;
+    let currentIndex = 0;
+    for (const [docId, doc] of this.documents) {
+      if (docId === documentId) {
+        documentIndex = currentIndex;
+        break;
       }
-    });
+      currentIndex++;
+    }
     
     if (documentIndex === -1) {
       return scores;
@@ -135,11 +292,14 @@ export class TFIDFProcessor {
     // Get terms for this specific document
     const terms = this.tfidf.listTerms(documentIndex);
     terms.forEach(term => {
-      scores.push({
-        term: term.term,
-        tfidf: term.tfidf,
-        tf: term.tf
-      });
+      // Only include terms that passed frequency filtering
+      if (this.corpusStats.has(term.term)) {
+        scores.push({
+          term: term.term,
+          tfidf: term.tfidf,
+          tf: term.tf
+        });
+      }
     });
     
     // Sort by TF-IDF score
@@ -171,15 +331,26 @@ export class TFIDFProcessor {
       });
     });
     
-    // Calculate IDF for each term
+    // Calculate maximum document frequency threshold (as absolute number)
+    const maxDocFreq = Math.floor(this.maxDocumentFrequency * totalDocs);
+    
+    // Filter terms based on document frequency and calculate IDF
     termDocFrequency.forEach((docFreq, term) => {
-      const idf = Math.log(totalDocs / docFreq);
+      // Apply frequency filtering
+      if (docFreq < this.minDocumentFrequency || docFreq > maxDocFreq) {
+        return; // Skip this term
+      }
+      
+      // Add smoothing to prevent division by zero and improve numerical stability
+      const idf = Math.log((totalDocs + 1) / (docFreq + 1));
       this.corpusStats.set(term, {
         documentFrequency: docFreq,
         idf: idf,
         totalDocuments: totalDocs
       });
     });
+    
+    console.log(`Corpus statistics: ${termDocFrequency.size} unique terms, ${this.corpusStats.size} terms after frequency filtering`);
   }
 
   /**
