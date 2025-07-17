@@ -19,11 +19,7 @@ const _defaultSearchFields = [
   'title', 
   'description', 
   'summary', 
-  'resolution', 
-  'resolution_description', 
-  'related_url', 
-  'related_artifacts', 
-  'related_pages'
+  'resolution_description'
 ];
 
 
@@ -103,6 +99,19 @@ class JiraIssuesMCPServer {
           },
         },
         {
+          name: 'find_related_issues',
+          description: 'Find issues related to a specific issue by key, using FTS5 for efficient searching',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              issue_key: { type: 'string', description: 'The issue key to find related issues for' },
+              keywords: { type: 'string', description: 'Keywords to search for in related issues' },
+              limit: { type: 'number', description: 'Maximum number of results (default: 50)', default: 50 }
+            },
+            required: ['issue_key'],
+          },
+        },
+        {
           name: 'search_issues',
           description: 'Search for tickets using SQLite FTS5 testing against issue fields',
           inputSchema: {
@@ -171,6 +180,8 @@ class JiraIssuesMCPServer {
           return await this.listIssues(args);
         case 'search_issues':
           return await this.searchIssues(args);
+        case 'find_related_issues':
+          return await this.findRelatedIssues(args);
         case 'get_issue_details':
           return await this.getIssueDetails(args);
         case 'get_issue_comments':
@@ -247,6 +258,100 @@ class JiraIssuesMCPServer {
     }
   }
 
+  async findRelatedIssues(args) {
+    const { issue_key, keywords, limit = 10 } = args;
+    
+    // retrieve the original issue so we can use it for context
+    const sourceIssueQuery = `SELECT * FROM issues_fts WHERE issue_key = ?`;
+    let sourceIssue;
+    try {
+      const sourceIssueStatement = this.db.prepare(sourceIssueQuery);
+      sourceIssue = sourceIssueStatement.get(issue_key);
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error finding related tickets: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+
+    if (!sourceIssue) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Source issue not found: ${issue_key}`
+        }],
+        isError: true
+      };
+    }
+
+    const params = { limit, keywords: keywords || '' };
+
+    // Use FTS5 for efficient searching
+    let ftsQuery = 'SELECT * FROM issues_fts WHERE ';
+
+    // Match project_key and work_group
+    ftsQuery += 'project_key = @project_key AND work_group = @work_group AND issue_key != @issue_key';
+    params.project_key = sourceIssue.project_key;
+    params.work_group = sourceIssue.work_group;
+    params.issue_key = issue_key;
+
+    // Add related_url, related_artifacts, related_pages if present
+    ['related_url', 'related_artifacts', 'related_pages'].forEach(field => {
+      if ((sourceIssue[field]) && (sourceIssue[field] !== '')) {
+        // if the string value has a comma character, split into multiple terms
+        if (typeof sourceIssue[field] === 'string' && sourceIssue[field].includes(',')) {
+          const fieldTerms = [];
+          const terms = sourceIssue[field].split(',').map(term => term.trim());
+          terms.forEach(term, index => {
+            params[`${field}_${index}`] = `%${term}%`;
+            fieldTerms.push(`${field} like @${field}_${index}`);
+          });
+          ftsQuery += ` AND (${fieldTerms.join(' OR ')})`;
+        } else {
+          params[field] = `%${sourceIssue[field]}%`;
+          ftsQuery += ` AND ${field} like @${field}`;
+        }
+      }
+    });
+
+    const matchConditions = [];
+    _defaultSearchFields.forEach(field => {
+      matchConditions.push(`${field} MATCH @keywords`);
+    });
+    
+    ftsQuery += ` AND ${matchConditions.join(' OR ')}`;
+    ftsQuery += ' ORDER BY rank DESC';
+    ftsQuery += ' LIMIT @limit';
+    
+    try {
+      const stmt = this.db.prepare(ftsQuery);
+      const issues = stmt.all(params);
+      
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            total: issues.length,
+            issue_key: issue_key,
+            keywords: keywords || '',
+            issues: issues
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error finding related issues: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+
   async searchIssues(args) {
     const { query, search_fields, limit = 50 } = args;
     
@@ -289,7 +394,7 @@ class JiraIssuesMCPServer {
       return {
         content: [{
           type: 'text',
-          text: `Error searching related tickets: ${error.message}`
+          text: `Error searching for issues: ${error.message}`
         }],
         isError: true
       };
