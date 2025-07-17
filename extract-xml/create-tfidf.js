@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { TFIDFProcessor } from "./tfidf-processor.js";
+import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
 
 // Validate configuration parameters
 function validateConfig(config) {
@@ -40,9 +41,9 @@ function validateConfig(config) {
 function parseArguments() {
   const args = process.argv.slice(2);
   const config = {
-    batchSize: 1000,
-    topKeywords: 15,
-    dbPath: "./jira_issues.sqlite",
+    batchSize: 5000,
+    topKeywords: 10,
+    dbPath: '',
     minDocFreq: 2,
     maxDocFreq: 0.7,
     minTermLength: 2,
@@ -678,6 +679,8 @@ function showSampleResults(db) {
 
 // Main execution
 async function main() {
+  console.log("Starting TF-IDF keyword extraction...");
+  
   let db;
   
   try {
@@ -693,6 +696,14 @@ async function main() {
     // Update global config
     CONFIG = config;
     
+    if (config.dbPath == '') {
+      try {
+        config.dbPath = getDatabasePath();
+      } catch (error) {
+        config.dbPath = path.join(process.cwd(), 'jira_issues.sqlite').replace(/\\/g, '/');
+      }
+    }
+
     console.log("Starting TF-IDF analysis for JIRA issues...\n");
     console.log(`Using database: ${config.dbPath}`);
     

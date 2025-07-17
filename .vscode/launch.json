@@ -6,6 +6,13 @@
     "configurations": [
         {
             "type": "node-terminal",
+            "name": "Launch MCP",
+            "request": "launch",
+            "command": "node fhir-jira-mcp\\index.js",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "node-terminal",
             "name": "Launch MCP:http",
             "request": "launch",
             "command": "npm run start:http",

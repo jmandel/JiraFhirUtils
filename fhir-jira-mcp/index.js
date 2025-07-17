@@ -52,8 +52,6 @@ class JiraIssuesMCPServer {
     this.setupHandlers();
   }
 
-
-
   async init() {
     try {
       const dbPath = getDatabasePath();
@@ -86,24 +84,23 @@ class JiraIssuesMCPServer {
         },
         {
           name: 'find_related_issues',
-          description: 'Find issues related to a specific issue by key, using FTS5 for efficient searching',
+          description: 'Find issues related to a specific issue by key',
           inputSchema: {
             type: 'object',
             properties: {
               issue_key: { type: 'string', description: 'The issue key to find related issues for' },
-              keywords: { type: 'string', description: 'Keywords to search for in related issues' },
-              limit: { type: 'number', description: 'Maximum number of results (default: 50)', default: 50 }
+              limit: { type: 'number', description: 'Maximum number of results (default: 10)', default: 10 }
             },
             required: ['issue_key'],
           },
         },
         {
-          name: 'search_issues',
-          description: 'Search for tickets using SQLite FTS5 testing against issue fields',
+          name: 'search_issues_by_keywords',
+          description: 'Search for tickets using SQLite FTS5 testing for keywords in multiple fields',
           inputSchema: {
             type: 'object',
             properties: {
-              query: { type: 'string', description: 'Search query string' },
+              keywords: { type: 'string', description: 'Keywords to search for in issues' },
               search_fields: {
                 type: 'array',
                 description: 'Fields to search in (default: all)',
@@ -112,7 +109,7 @@ class JiraIssuesMCPServer {
                   enum: _defaultSearchFields,
                 }
               },
-              limit: { type: 'number', description: 'Maximum number of results (default: 50)', default: 50 }
+              limit: { type: 'number', description: 'Maximum number of results (default: 20)', default: 20 }
             },
             required: ['query'],
           },
@@ -164,8 +161,8 @@ class JiraIssuesMCPServer {
       switch (name) {
         case 'list_issues':
           return await this.listIssues(args);
-        case 'search_issues':
-          return await this.searchIssues(args);
+        case 'search_issues_by_keywords':
+          return await this.searchIssuesByKeywords(args);
         case 'find_related_issues':
           return await this.findRelatedIssues(args);
         case 'get_issue_details':
@@ -185,32 +182,37 @@ class JiraIssuesMCPServer {
   async listIssues(args) {
     const { project_key, work_group, resolution, status, assignee, limit = 50, offset = 0 } = args;
     
-    let query = 'SELECT * FROM issues_fts WHERE 1=1';
+    const searchConditions = [];
+    let query = 'SELECT * FROM issues_fts';
     const params = {};
     
     if (project_key) {
-      query += ' AND project_key = @project_key';
+      searchConditions.push('project_key = @project_key');
       params.project_key = project_key;
     }
     
     if (work_group) {
-      query += ` AND work_group = @work_group`;
+      searchConditions.push('work_group = @work_group');
       params.work_group = work_group;
     }
     
     if (resolution) {
-      query += ' AND resolution = @resolution';
+      searchConditions.push('resolution = @resolution');
       params.resolution = resolution;
     }
     
     if (status) {
-      query += ' AND status = @status';
+      searchConditions.push('status = @status');
       params.status = status;
     }
     
     if (assignee) {
-      query += ' AND assignee = @assignee';
+      searchConditions.push('assignee = @assignee');
       params.assignee = assignee;
+    }
+
+    if (searchConditions.length > 0) {
+      query += ' WHERE ' + searchConditions.join(' AND ');
     }
     
     // query += ' ORDER BY updated_at DESC LIMIT @limit OFFSET @offset';
@@ -245,10 +247,10 @@ class JiraIssuesMCPServer {
   }
 
   async findRelatedIssues(args) {
-    const { issue_key, keywords, limit = 10 } = args;
+    const { issue_key, limit = 10 } = args;
     
     // retrieve the original issue so we can use it for context
-    const sourceIssueQuery = `SELECT * FROM issues_fts WHERE issue_key = ?`;
+    const sourceIssueQuery = 'SELECT * FROM issues_fts WHERE issue_key = ?';
     let sourceIssue;
     try {
       const sourceIssueStatement = this.db.prepare(sourceIssueQuery);
@@ -273,7 +275,26 @@ class JiraIssuesMCPServer {
       };
     }
 
-    const params = { limit, keywords: keywords || '' };
+    // get the top keywords from the source issue
+    const keywordQuery = 'SELECT keyword from tfidf_keywords where issue_key = ? ORDER BY tfidf_score DESC LIMIT 3';
+    let keywords = '';
+    try {
+      const keywordStatement = this.db.prepare(keywordQuery);
+      const keywordRows = keywordStatement.all(issue_key);
+      if (keywordRows.length > 0) {
+        keywords = keywordRows.map(row => row.keyword).join(' OR ');
+      }
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error retrieving keywords for related issues: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+
+    const params = { limit, keywords: keywords };
 
     // Use FTS5 for efficient searching
     let ftsQuery = 'SELECT * FROM issues_fts WHERE ';
@@ -291,13 +312,49 @@ class JiraIssuesMCPServer {
         if (typeof sourceIssue[field] === 'string' && sourceIssue[field].includes(',')) {
           const fieldTerms = [];
           const terms = sourceIssue[field].split(',').map(term => term.trim());
-          terms.forEach(term, index => {
-            params[`${field}_${index}`] = `%${term}%`;
+          terms.forEach((term, index) => {
+            let searchTerm = term;
+            
+            // For related_url, extract filename from URL
+            if (field === 'related_url') {
+              try {
+                const url = new URL(term);
+                let filename = url.pathname.split('/').pop();
+                // Remove file extension and fragment
+                if (filename) {
+                  filename = filename.split('.')[0]; // Remove extension
+                }
+                searchTerm = filename || term; // fallback to original if no filename
+              } catch (e) {
+                // If URL parsing fails, use the original term
+                searchTerm = term;
+              }
+            }
+            
+            params[`${field}_${index}`] = `%${searchTerm}%`;
             fieldTerms.push(`${field} like @${field}_${index}`);
           });
           ftsQuery += ` AND (${fieldTerms.join(' OR ')})`;
         } else {
-          params[field] = `%${sourceIssue[field]}%`;
+          let searchTerm = sourceIssue[field];
+          
+          // For related_url, extract filename from URL
+          if (field === 'related_url') {
+            try {
+              const url = new URL(sourceIssue[field]);
+              let filename = url.pathname.split('/').pop();
+              // Remove file extension and fragment
+              if (filename) {
+                filename = filename.split('.')[0]; // Remove extension
+              }
+              searchTerm = filename || sourceIssue[field]; // fallback to original if no filename
+            } catch (e) {
+              // If URL parsing fails, use the original value
+              searchTerm = sourceIssue[field];
+            }
+          }
+          
+          params[field] = `%${searchTerm}%`;
           ftsQuery += ` AND ${field} like @${field}`;
         }
       }
@@ -308,7 +365,7 @@ class JiraIssuesMCPServer {
       matchConditions.push(`${field} MATCH @keywords`);
     });
     
-    ftsQuery += ` AND ${matchConditions.join(' OR ')}`;
+    ftsQuery += ` AND (${matchConditions.join(' OR ')})`;
     ftsQuery += ' ORDER BY rank DESC';
     ftsQuery += ' LIMIT @limit';
     
@@ -323,7 +380,9 @@ class JiraIssuesMCPServer {
             total: issues.length,
             issue_key: issue_key,
             keywords: keywords || '',
-            issues: issues
+            issues: issues,
+            // ftsQuery: ftsQuery,
+            // params: params
           }, null, 2)
         }]
       };
@@ -338,8 +397,8 @@ class JiraIssuesMCPServer {
     }
   }
 
-  async searchIssues(args) {
-    const { query, search_fields, limit = 50 } = args;
+  async searchIssuesByKeywords(args) {
+    const { keywords, search_fields, limit = 50 } = args;
     
     // Use FTS5 for efficient searching
     let ftsQuery = 'SELECT * FROM issues_fts WHERE ';
@@ -350,11 +409,9 @@ class JiraIssuesMCPServer {
       : _defaultSearchFields;
     
     // Build the FTS query
-    if (fieldsToSearch.length === 1) {
-      searchConditions.push(`${fieldsToSearch[0]} MATCH @query`);
-    } else {
-      searchConditions.push(`issues_fts MATCH @query`);
-    }
+    fieldsToSearch.forEach(field => {
+      searchConditions.push(`${field} MATCH @keywords`);
+    });
     
     ftsQuery += searchConditions.join(' OR ');
     ftsQuery += ' ORDER BY rank DESC';
@@ -363,14 +420,14 @@ class JiraIssuesMCPServer {
     try {
       // console.log(`Executing query: ${ftsQuery} with params:`, { query, limit });
       const stmt = this.db.prepare(ftsQuery);
-      const issues = stmt.all({ query, limit });
+      const issues = stmt.all({ keywords, limit });
       
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
             total: issues.length,
-            query,
+            keywords: keywords,
             search_fields: fieldsToSearch,
             issues: issues
           }, null, 2)
