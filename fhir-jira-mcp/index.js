@@ -83,6 +83,18 @@ class JiraIssuesMCPServer {
           },
         },
         {
+          name: 'list_related_issues',
+          description: 'List issues related to a specific issue by key',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              issue_key: { type: 'string', description: 'The issue key to find related issues for' },
+              limit: { type: 'number', description: 'Maximum number of results (default: 10)', default: 10 }
+            },
+            required: ['issue_key'],
+          },
+        },
+        {
           name: 'find_related_issues',
           description: 'Find issues related to a specific issue by key',
           inputSchema: {
@@ -163,6 +175,8 @@ class JiraIssuesMCPServer {
           return await this.listIssues(args);
         case 'search_issues_by_keywords':
           return await this.searchIssuesByKeywords(args);
+        case 'list_related_issues':
+          return await this.listRelatedIssues(args);
         case 'find_related_issues':
           return await this.findRelatedIssues(args);
         case 'get_issue_details':
@@ -240,6 +254,180 @@ class JiraIssuesMCPServer {
         content: [{
           type: 'text',
           text: `Error browsing work queue: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+  }
+
+    async listRelatedIssues(args) {
+    const { issue_key, limit = 10 } = args;
+    
+    // retrieve the original issue so we can use it for context
+    const sourceIssueQuery = 'SELECT * FROM issues_fts WHERE issue_key = ?';
+    let sourceIssue;
+    try {
+      const sourceIssueStatement = this.db.prepare(sourceIssueQuery);
+      sourceIssue = sourceIssueStatement.get(issue_key);
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error finding related tickets: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+
+    if (!sourceIssue) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Source issue not found: ${issue_key}`
+        }],
+        isError: true
+      };
+    }
+
+    // get the explicit linked related issues
+    let linkedIssues = [];
+
+    try {
+      const linkedIssuesQuery = `SELECT field_value FROM custom_fields WHERE issue_key = ? AND field_name = 'Related Issues'`;
+      const linkedIssuesStatement = this.db.prepare(linkedIssuesQuery);
+      const linkedIssueValue = linkedIssuesStatement.get(issue_key);
+
+      if (linkedIssueValue && linkedIssueValue.field_value) {
+        linkedIssues = linkedIssueValue.field_value.split(',').map(issue => issue.trim());
+      }
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error finding related tickets: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+
+    // get the top keywords from the source issue
+    const keywordQuery = 'SELECT keyword from tfidf_keywords where issue_key = ? ORDER BY tfidf_score DESC LIMIT 3';
+    let keywords = '';
+    try {
+      const keywordStatement = this.db.prepare(keywordQuery);
+      const keywordRows = keywordStatement.all(issue_key);
+      if (keywordRows.length > 0) {
+        keywords = keywordRows.map(row => row.keyword).join(' OR ');
+      }
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error retrieving keywords for related issues: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+
+    const params = { limit, keywords: keywords };
+
+    // Use FTS5 for efficient searching
+    let ftsQuery = 'SELECT issue_key FROM issues_fts WHERE ';
+
+    // Match project_key and work_group
+    ftsQuery += 'project_key = @project_key AND work_group = @work_group AND issue_key != @issue_key';
+    params.project_key = sourceIssue.project_key;
+    params.work_group = sourceIssue.work_group;
+    params.issue_key = issue_key;
+
+    // Add related_url, related_artifacts, related_pages if present
+    ['related_url', 'related_artifacts', 'related_pages'].forEach(field => {
+      if ((sourceIssue[field]) && (sourceIssue[field] !== '')) {
+        // if the string value has a comma character, split into multiple terms
+        if (typeof sourceIssue[field] === 'string' && sourceIssue[field].includes(',')) {
+          const fieldTerms = [];
+          const terms = sourceIssue[field].split(',').map(term => term.trim());
+          terms.forEach((term, index) => {
+            let searchTerm = term;
+            
+            // For related_url, extract filename from URL
+            if (field === 'related_url') {
+              try {
+                const url = new URL(term);
+                let filename = url.pathname.split('/').pop();
+                // Remove file extension and fragment
+                if (filename) {
+                  filename = filename.split('.')[0]; // Remove extension
+                }
+                searchTerm = filename || term; // fallback to original if no filename
+              } catch (e) {
+                // If URL parsing fails, use the original term
+                searchTerm = term;
+              }
+            }
+            
+            params[`${field}_${index}`] = `%${searchTerm}%`;
+            fieldTerms.push(`${field} like @${field}_${index}`);
+          });
+          ftsQuery += ` AND (${fieldTerms.join(' OR ')})`;
+        } else {
+          let searchTerm = sourceIssue[field];
+          
+          // For related_url, extract filename from URL
+          if (field === 'related_url') {
+            try {
+              const url = new URL(sourceIssue[field]);
+              let filename = url.pathname.split('/').pop();
+              // Remove file extension and fragment
+              if (filename) {
+                filename = filename.split('.')[0]; // Remove extension
+              }
+              searchTerm = filename || sourceIssue[field]; // fallback to original if no filename
+            } catch (e) {
+              // If URL parsing fails, use the original value
+              searchTerm = sourceIssue[field];
+            }
+          }
+          
+          params[field] = `%${searchTerm}%`;
+          ftsQuery += ` AND ${field} like @${field}`;
+        }
+      }
+    });
+
+    const matchConditions = [];
+    _defaultSearchFields.forEach(field => {
+      matchConditions.push(`${field} MATCH @keywords`);
+    });
+    
+    ftsQuery += ` AND (${matchConditions.join(' OR ')})`;
+    ftsQuery += ' ORDER BY rank DESC';
+    ftsQuery += ' LIMIT @limit';
+    
+    try {
+      const stmt = this.db.prepare(ftsQuery);
+      const issues = stmt.all(params);
+      
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            issue_key: issue_key,
+            total_linked: linkedIssues.length,
+            total_keyword_related: issues.length,
+            keywords: keywords || '',
+            issues_linked: linkedIssues,
+            issues_keyword_related: issues,
+            // ftsQuery: ftsQuery,
+            // params: params
+          }, null, 2)
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error listing related issues: ${error.message}`
         }],
         isError: true
       };
