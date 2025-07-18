@@ -275,6 +275,31 @@ class JiraIssuesMCPServer {
       };
     }
 
+    // get the explicit linked related issues
+    let linkedIssues = [];
+
+    try {
+      const linkedIssuesQuery = `SELECT field_value FROM custom_fields WHERE issue_key = ? AND field_name = 'Related Issues'`;
+      const linkedIssuesStatement = this.db.prepare(linkedIssuesQuery);
+      const linkedIssueValue = linkedIssuesStatement.get(issue_key);
+
+      if (linkedIssueValue && linkedIssueValue.field_value) {
+        const relatedIssueKeys = linkedIssueValue.field_value.split(',').map(issue => issue.trim());
+        linkedIssues = relatedIssueKeys.map(key => {
+          const issueStmt = this.db.prepare('SELECT * FROM issues_fts WHERE issue_key = ?');
+          return issueStmt.get(key);
+        }).filter(issue => issue); // filter out any null results
+      }
+    } catch (error) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error finding related tickets: ${error.message}`
+        }],
+        isError: true
+      };
+    }
+
     // get the top keywords from the source issue
     const keywordQuery = 'SELECT keyword from tfidf_keywords where issue_key = ? ORDER BY tfidf_score DESC LIMIT 3';
     let keywords = '';
@@ -377,10 +402,12 @@ class JiraIssuesMCPServer {
         content: [{
           type: 'text',
           text: JSON.stringify({
-            total: issues.length,
             issue_key: issue_key,
+            total_linked: linkedIssues.length,
+            total_keyword_related: issues.length,
             keywords: keywords || '',
-            issues: issues,
+            issues_linked: linkedIssues,
+            issues_keyword_related: issues,
             // ftsQuery: ftsQuery,
             // params: params
           }, null, 2)
