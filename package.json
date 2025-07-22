@@ -4,6 +4,7 @@
   "description": "Tools and utilities to ease Jira ticket processing for FHIR",
   "type": "module",
   "scripts": {
+    "download-issues": "node extract-xml/download-issues.js",
     "extract-archives": "node extract-xml/extract-archives.js",
     "load-initial": "node extract-xml/load-initial.js",
     "load-updates": "node extract-xml/load-updates.js",
