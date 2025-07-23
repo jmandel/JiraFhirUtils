@@ -409,16 +409,18 @@ class JiraIssuesMCPServer {
       };
     }
 
-    const params: Record<string, any> = { limit, keywords: keywords };
-
-    // Use FTS5 for efficient searching
-    let ftsQuery = 'SELECT issue_key FROM issues_fts WHERE ';
+    // Build a regular SQL query using the issues_fts table for consistency
+    let baseQuery = 'SELECT issue_key FROM issues_fts WHERE ';
+    const conditions: string[] = [];
+    const queryParams: any[] = [];
 
     // Match project_key and work_group
-    ftsQuery += 'project_key = @project_key AND work_group = @work_group AND issue_key != @issue_key';
-    params.project_key = sourceIssue.project_key;
-    params.work_group = sourceIssue.work_group;
-    params.issue_key = issue_key;
+    conditions.push('project_key = ?');
+    conditions.push('work_group = ?');
+    conditions.push('issue_key != ?');
+    queryParams.push(sourceIssue.project_key);
+    queryParams.push(sourceIssue.work_group);
+    queryParams.push(issue_key);
 
     // Add related_url, related_artifacts, related_pages if present
     (['related_url', 'related_artifacts', 'related_pages'] as const).forEach(field => {
@@ -427,7 +429,7 @@ class JiraIssuesMCPServer {
         if (typeof sourceIssue![field] === 'string' && sourceIssue![field]!.includes(',')) {
           const fieldTerms: string[] = [];
           const terms = sourceIssue![field]!.split(',').map(term => term.trim());
-          terms.forEach((term, index) => {
+          terms.forEach((term) => {
             let searchTerm = term;
             
             // For related_url, extract filename from URL
@@ -446,10 +448,12 @@ class JiraIssuesMCPServer {
               }
             }
             
-            params[`${field}_${index}`] = `%${searchTerm}%`;
-            fieldTerms.push(`${field} like @${field}_${index}`);
+            fieldTerms.push(`${field} LIKE ?`);
+            queryParams.push(`%${searchTerm}%`);
           });
-          ftsQuery += ` AND (${fieldTerms.join(' OR ')})`;
+          if (fieldTerms.length > 0) {
+            conditions.push(`(${fieldTerms.join(' OR ')})`);
+          }
         } else {
           let searchTerm = sourceIssue![field]!;
           
@@ -469,24 +473,49 @@ class JiraIssuesMCPServer {
             }
           }
           
-          params[field] = `%${searchTerm}%`;
-          ftsQuery += ` AND ${field} like @${field}`;
+          conditions.push(`${field} LIKE ?`);
+          queryParams.push(`%${searchTerm}%`);
         }
       }
     });
 
-    const matchConditions: string[] = [];
-    _defaultSearchFields.forEach(field => {
-      matchConditions.push(`${field} MATCH @keywords`);
-    });
+    // For keyword matching, use a separate FTS5 query if we have keywords
+    let keywordMatches: string[] = [];
+    if (keywords && keywords.trim()) {
+      try {
+        const ftsQuery = 'SELECT issue_key FROM issues_fts WHERE ' + 
+          _defaultSearchFields.map(field => `${field} MATCH ?`).join(' OR ') +
+          ' ORDER BY rank DESC LIMIT ?';
+        const ftsStmt = this.db.prepare(ftsQuery);
+        const ftsParams = [..._defaultSearchFields.map(() => keywords), limit];
+        const ftsResults = ftsStmt.all(...ftsParams) as { issue_key: string }[];
+        keywordMatches = ftsResults.map(r => r.issue_key);
+      } catch (error) {
+        // If FTS5 fails, continue without keyword matching
+        console.error('FTS5 keyword matching failed:', error);
+      }
+    }
+
+    baseQuery += conditions.join(' AND ') + ' ORDER BY issue_int DESC LIMIT ?';
+    queryParams.push(limit);
     
-    ftsQuery += ` AND (${matchConditions.join(' OR ')})`;
-    ftsQuery += ' ORDER BY rank DESC';
-    ftsQuery += ' LIMIT @limit';
-    
+    let debug = 'start';
     try {
-      const stmt = this.db.prepare(ftsQuery);
-      const issues = stmt.all(params) as { issue_key: string }[];
+      const stmt = this.db.prepare(baseQuery);
+      debug = 'after prepare';
+      const relatedIssues = stmt.all(...queryParams) as { issue_key: string }[];
+      debug = 'after execute';
+      
+      // Combine keyword matches with related field matches, removing duplicates
+      const allMatches = new Set([
+        ...relatedIssues.map(r => r.issue_key),
+        ...keywordMatches
+      ]);
+      
+      // Remove the source issue itself and convert back to array
+      const finalMatches = Array.from(allMatches)
+        .filter(key => key !== issue_key)
+        .slice(0, limit);
       
       return {
         content: [{
@@ -494,12 +523,10 @@ class JiraIssuesMCPServer {
           text: JSON.stringify({
             issue_key: issue_key,
             total_linked: linkedIssues.length,
-            total_keyword_related: issues.length,
+            total_keyword_related: finalMatches.length,
             keywords: keywords || '',
             issues_linked: linkedIssues,
-            issues_keyword_related: issues,
-            // ftsQuery: ftsQuery,
-            // params: params
+            issues_keyword_related: finalMatches.map(key => ({ issue_key: key })),
           }, null, 2)
         }]
       };
@@ -508,7 +535,7 @@ class JiraIssuesMCPServer {
       return {
         content: [{
           type: 'text',
-          text: `Error listing related issues: ${errorMessage}`
+          text: `Error listing related issues, dbg: ${debug}: ${errorMessage}`
         }],
         isError: true
       };
@@ -593,7 +620,7 @@ class JiraIssuesMCPServer {
       };
     }
 
-    const params: Record<string, any> = { limit, keywords: keywords };
+    const params: Record<string, any> = { limit };
 
     // Use FTS5 for efficient searching
     let ftsQuery = 'SELECT * FROM issues_fts WHERE ';
@@ -659,13 +686,20 @@ class JiraIssuesMCPServer {
       }
     });
 
-    const matchConditions: string[] = [];
-    _defaultSearchFields.forEach(field => {
-      matchConditions.push(`${field} MATCH @keywords`);
-    });
-    
-    ftsQuery += ` AND (${matchConditions.join(' OR ')})`;
-    ftsQuery += ' ORDER BY rank DESC';
+    // Only add keyword matching if we have keywords
+    if (keywords && keywords.trim()) {
+      params.keywords = keywords;
+      const matchConditions: string[] = [];
+      _defaultSearchFields.forEach(field => {
+        matchConditions.push(`${field} MATCH @keywords`);
+      });
+      
+      ftsQuery += ` AND (${matchConditions.join(' OR ')})`;
+      ftsQuery += ' ORDER BY rank DESC';
+    } else {
+      // If no keywords, just order by issue number
+      ftsQuery += ' ORDER BY issue_int DESC';
+    }
     ftsQuery += ' LIMIT @limit';
     
     try {
@@ -910,10 +944,16 @@ class JiraIssuesMCPServer {
   }
 }
 
+// Export for testing
+export { JiraIssuesMCPServer };
+
 async function main(): Promise<void> {
   await initializeOptions();
   const server = new JiraIssuesMCPServer();
   await server.run();
 }
 
-main().catch(console.error);
+// Only run main if this file is executed directly (not imported)
+if (import.meta.main) {
+  main().catch(console.error);
+}

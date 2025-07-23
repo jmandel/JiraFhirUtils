@@ -31,6 +31,7 @@ interface ClientSession {
     timestamp: number;
   }>;
   sseController?: ReadableStreamDefaultController;
+  keepAliveInterval?: NodeJS.Timeout;
 }
 
 class MCPSubprocess {
@@ -220,17 +221,25 @@ class SessionManager {
 
   deleteSession(id: string): void {
     const session = this.sessions.get(id);
-    if (session?.sseController) {
-      try {
-        session.sseController.close();
-      } catch (error) {
-        // Ignore close errors
+    if (session) {
+      // Clean up SSE controller
+      if (session.sseController) {
+        try {
+          session.sseController.close();
+        } catch (error) {
+          // Ignore close errors
+        }
       }
-    }
-    
-    // Reject all pending requests
-    for (const [requestId, request] of session.pendingRequests.entries()) {
-      request.reject(new Error('Session terminated'));
+      
+      // Clean up keep-alive interval
+      if (session.keepAliveInterval) {
+        clearInterval(session.keepAliveInterval);
+      }
+      
+      // Reject all pending requests
+      for (const [requestId, request] of session.pendingRequests.entries()) {
+        request.reject(new Error('Session terminated'));
+      }
     }
     
     this.sessions.delete(id);
@@ -318,6 +327,7 @@ class MCPHttpWrapper {
     const server = Bun.serve({
       port: this.options.port,
       fetch: this.handleRequest.bind(this),
+      idleTimeout: 255, // Maximum allowed timeout in seconds
     });
 
     console.log(`MCP HTTP wrapper listening on port ${this.options.port}`);
@@ -411,7 +421,7 @@ class MCPHttpWrapper {
       }
 
       // Check if all messages are responses/notifications (no requests)
-      const hasRequests = messages.some(msg => msg.method && msg.id !== undefined);
+      const hasRequests = messages.some(msg => msg.method && msg.id !== undefined && msg.id !== null);
       const isInitialization = messages.some(msg => msg.method === 'initialize');
 
       if (!hasRequests) {
@@ -426,7 +436,7 @@ class MCPHttpWrapper {
       const responsePromises: Promise<JsonRpcMessage>[] = [];
       
       for (const message of messages) {
-        if (message.method && message.id !== undefined) {
+        if (message.method && message.id !== undefined && message.id !== null) {
           // This is a request - add to pending and create promise
           const responsePromise = new Promise<JsonRpcMessage>((resolve, reject) => {
             this.sessionManager.addPendingRequest(session.id, message.id!, resolve, reject);
@@ -450,6 +460,19 @@ class MCPHttpWrapper {
           start(controller) {
             session.sseController = controller;
             
+            // Set up keep-alive interval to prevent timeouts
+            session.keepAliveInterval = setInterval(() => {
+              try {
+                controller.enqueue(new TextEncoder().encode(': keep-alive\n\n'));
+              } catch (error) {
+                // Stream was closed, clean up interval
+                if (session.keepAliveInterval) {
+                  clearInterval(session.keepAliveInterval);
+                  session.keepAliveInterval = undefined;
+                }
+              }
+            }, 30000); // Send keep-alive every 30 seconds
+            
             // Send responses as they come in
             Promise.allSettled(responsePromises).then(results => {
               for (const result of results) {
@@ -466,12 +489,23 @@ class MCPHttpWrapper {
                   controller.enqueue(new TextEncoder().encode(sseData));
                 }
               }
+              
+              // Clean up keep-alive interval before closing
+              if (session.keepAliveInterval) {
+                clearInterval(session.keepAliveInterval);
+                session.keepAliveInterval = undefined;
+              }
+              
               controller.close();
               session.sseController = undefined;
             });
           },
           cancel() {
             session.sseController = undefined;
+            if (session.keepAliveInterval) {
+              clearInterval(session.keepAliveInterval);
+              session.keepAliveInterval = undefined;
+            }
           }
         });
 
@@ -550,9 +584,22 @@ class MCPHttpWrapper {
         // Store controller in session for server-initiated messages
         session.sseController = controller;
 
-        // Send initial connection established event
-        const connectData = 'data: {"type":"connection_established"}\n\n';
-        controller.enqueue(new TextEncoder().encode(connectData));
+        // Send initial keep-alive comment (not a JSON-RPC message)
+        const keepAlive = ': connection established\n\n';
+        controller.enqueue(new TextEncoder().encode(keepAlive));
+
+        // Set up keep-alive interval to prevent timeouts
+        session.keepAliveInterval = setInterval(() => {
+          try {
+            controller.enqueue(new TextEncoder().encode(': keep-alive\n\n'));
+          } catch (error) {
+            // Stream was closed, clean up interval
+            if (session.keepAliveInterval) {
+              clearInterval(session.keepAliveInterval);
+              session.keepAliveInterval = undefined;
+            }
+          }
+        }, 30000); // Send keep-alive every 30 seconds
 
         // If resuming from last event ID, we could replay messages here
         // but for now we just start fresh
@@ -563,6 +610,10 @@ class MCPHttpWrapper {
       cancel() {
         // Clean up when client disconnects
         session.sseController = undefined;
+        if (session.keepAliveInterval) {
+          clearInterval(session.keepAliveInterval);
+          session.keepAliveInterval = undefined;
+        }
         console.log(`SSE stream cancelled for session: ${session.id}`);
       }
     });
@@ -633,15 +684,17 @@ class MCPHttpWrapper {
       return;
     }
 
-    // Handle notifications and requests from server (no id or method present)
+    // Handle notifications from server (method present, but no id or id is null)
     // These should be broadcast to all active SSE streams
-    for (const session of this.sessionManager.getAllSessions()) {
-      if (session.sseController) {
-        try {
-          const sseData = `data: ${JSON.stringify(message)}\n\n`;
-          session.sseController.enqueue(new TextEncoder().encode(sseData));
-        } catch (error) {
-          console.error('Failed to send SSE message to session:', session.id, error);
+    if (message.method && (message.id === undefined || message.id === null)) {
+      for (const session of this.sessionManager.getAllSessions()) {
+        if (session.sseController) {
+          try {
+            const sseData = `data: ${JSON.stringify(message)}\n\n`;
+            session.sseController.enqueue(new TextEncoder().encode(sseData));
+          } catch (error) {
+            console.error('Failed to send SSE message to session:', session.id, error);
+          }
         }
       }
     }
