@@ -3,13 +3,14 @@
   "version": "1.0.0",
   "description": "Tools and utilities to ease Jira ticket processing for FHIR",
   "type": "module",
+  "workspaces": ["packages/*"],
   "scripts": {
-    "download-issues": "node extract-xml/download-issues.js",
-    "extract-archives": "node extract-xml/extract-archives.js",
-    "load-initial": "node extract-xml/load-initial.js",
-    "load-updates": "node extract-xml/load-updates.js",
-    "create-fts": "node extract-xml/create-fts.js",
-    "create-tfidf": "node extract-xml/create-tfidf.js"
+    "download-issues": "bun run @jira-fhir-utils/fhir-jira-db download-issues",
+    "extract-archives": "bun run @jira-fhir-utils/fhir-jira-db extract-archives",
+    "load-initial": "bun run @jira-fhir-utils/fhir-jira-db load-initial",
+    "load-updates": "bun run @jira-fhir-utils/fhir-jira-db load-updates",
+    "create-fts": "bun run @jira-fhir-utils/fhir-jira-db create-fts",
+    "create-tfidf": "bun run @jira-fhir-utils/fhir-jira-db create-tfidf"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
@@ -28,5 +29,13 @@
     "mcp"
   ],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "module": "index.ts",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
 }

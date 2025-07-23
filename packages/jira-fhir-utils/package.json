@@ -1,0 +1,17 @@
+{
+  "name": "@jira-fhir-utils/jira-fhir-utils",
+  "version": "1.0.0",
+  "description": "Main orchestrator package for FHIR Jira utilities",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "bun run index.js"
+  },
+  "dependencies": {
+    "@jira-fhir-utils/fhir-jira-db": "workspace:*",
+    "@jira-fhir-utils/database-utils": "workspace:*"
+  },
+  "keywords": ["jira", "fhir", "orchestrator"],
+  "author": "",
+  "license": "ISC"
+}

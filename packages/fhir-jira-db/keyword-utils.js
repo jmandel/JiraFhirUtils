@@ -1,5 +1,5 @@
-import Database from "better-sqlite3";
-import { getDatabasePath } from "./database-utils.js";
+import { Database } from "bun:sqlite";
+import { getDatabasePath } from "@jira-fhir-utils/database-utils";
 
 export class KeywordUtils {
   constructor(dbPath = null) {

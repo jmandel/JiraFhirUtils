@@ -1,7 +1,7 @@
-import { execa } from "execa";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { $ } from "bun";
 
 // --- Configuration ---
 const BULK_ARCHIVE = "bulk.tar.gz";
@@ -24,12 +24,12 @@ async function extractArchive(archivePath, targetDir) {
   try {
     if (fs.existsSync(fullTargetDir)) {
       console.log(`Target directory ${targetDir} already exists. Removing...`);
-      await execa('rm', ['-rf', fullTargetDir]);
+      await $`rm -rf ${fullTargetDir}`;
     }
     
-    await execa('mkdir', ['-p', fullTargetDir]);
+    await $`mkdir -p ${fullTargetDir}`;
     
-    await execa('tar', ['-xzf', fullArchivePath, '-C', fullTargetDir, '--strip-components=1']);
+    await $`tar -xzf ${fullArchivePath} -C ${fullTargetDir} --strip-components=1`;
     
     console.log(`✓ Successfully extracted ${archivePath}`);
     return true;

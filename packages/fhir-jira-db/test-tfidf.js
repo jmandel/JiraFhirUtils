@@ -1,6 +1,6 @@
 import { KeywordUtils } from "./keyword-utils.js";
-import Database from "better-sqlite3";
-import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
+import { Database } from "bun:sqlite";
+import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
 
 // Test the TF-IDF implementation
 async function testTFIDF() {

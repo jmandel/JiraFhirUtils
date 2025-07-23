@@ -1,0 +1,33 @@
+{
+  "name": "@jira-fhir-utils/fhir-jira-db",
+  "version": "1.0.0",
+  "description": "XML extraction and processing utilities for FHIR Jira data",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "download-issues": "./download-issues.js",
+    "extract-archives": "./extract-archives.js",
+    "load-initial": "./load-initial.js",
+    "load-updates": "./load-updates.js",
+    "create-fts": "./create-fts.js",
+    "create-tfidf": "./create-tfidf.js"
+  },
+  "scripts": {
+    "download-issues": "bun run download-issues.js",
+    "extract-archives": "bun run extract-archives.js",
+    "load-initial": "bun run load-initial.js",
+    "load-updates": "bun run load-updates.js",
+    "create-fts": "bun run create-fts.js",
+    "create-tfidf": "bun run create-tfidf.js"
+  },
+  "dependencies": {
+    "@jira-fhir-utils/database-utils": "workspace:*",
+    "fast-xml-parser": "^4.5.1",
+    "natural": "^8.1.0",
+    "stopword": "^3.1.5",
+    "commander": "^14.0.0"
+  },
+  "keywords": ["jira", "fhir", "xml", "extraction"],
+  "author": "",
+  "license": "ISC"
+}

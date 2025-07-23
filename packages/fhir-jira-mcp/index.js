@@ -4,14 +4,12 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import express from 'express';
-import cors from 'cors';
 import { program } from 'commander';
-import { getDatabasePath, setupDatabaseCliArgs } from '../extract-xml/database-utils.js';
+import { getDatabasePath, setupDatabaseCliArgs } from '@jira-fhir-utils/database-utils';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -808,47 +806,118 @@ class JiraIssuesMCPServer {
     
     // Start HTTP server if port is specified
     if (options.port) {
-      const app = express();
-      
-      // Configure CORS to be as permissive as possible
-      app.use(cors({
-        origin: '*',
-        credentials: true,
-        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-        allowedHeaders: '*',
-        exposedHeaders: ['Mcp-Session-Id'],
-      }));
-      
-      app.use(express.json({ limit: '50mb' }));
-      
-      // Create HTTP transport in stateless mode
       const httpTransport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined, // stateless mode - no session management
+        sessionIdGenerator: () => Math.random().toString(36).substring(2, 15)
       });
-      
-      // Connect the HTTP transport to the server
       await this.server.connect(httpTransport);
       
-      // Handle MCP requests at /mcp endpoint
-      app.post('/mcp', async (req, res) => {
-        try {
-          await httpTransport.handleRequest(req, res, req.body);
-        } catch (error) {
-          console.error('Error handling MCP request:', error);
-          res.status(500).json({ error: 'Internal server error' });
-        }
+      Bun.serve({
+        port: options.port,
+        async fetch(req) {
+          const url = new URL(req.url);
+          
+          // Health check endpoint
+          if (url.pathname === '/health' && req.method === 'GET') {
+            return new Response(JSON.stringify({ status: 'ok', service: 'fhir-jira-mcp' }), {
+              headers: { 'Content-Type': 'application/json' }
+            });
+          }
+          
+          // Handle CORS preflight requests
+          if (req.method === 'OPTIONS') {
+            return new Response(null, {
+              status: 200,
+              headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Credentials': 'true',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization',
+                'Access-Control-Expose-Headers': 'Mcp-Session-Id',
+              }
+            });
+          }
+          
+          // Handle MCP requests at /mcp endpoint
+          if (url.pathname === '/mcp') {
+            // Check if client sent proper Accept header
+            const acceptHeader = req.headers.get('accept') || '';
+            if (!acceptHeader.includes('application/json') || !acceptHeader.includes('text/event-stream')) {
+              return new Response(JSON.stringify({
+                jsonrpc: '2.0',
+                error: {
+                  code: -32000,
+                  message: 'Not Acceptable: Client must accept both application/json and text/event-stream'
+                },
+                id: null
+              }), {
+                status: 406,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*'
+                }
+              });
+            }
+            
+            try {
+              // Create a proper HTTP-like response interface for the transport
+              const response = {
+                writeHead: (statusCode, headers = {}) => {
+                  response._statusCode = statusCode;
+                  response._headers = { ...response._headers, ...headers };
+                },
+                setHeader: (name, value) => {
+                  response._headers = response._headers || {};
+                  response._headers[name] = value;
+                },
+                write: (chunk) => {
+                  response._body = (response._body || '') + chunk;
+                },
+                end: (chunk) => {
+                  if (chunk) response._body = (response._body || '') + chunk;
+                  response._ended = true;
+                },
+                _statusCode: 200,
+                _headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Credentials': 'true'
+                },
+                _body: '',
+                _ended: false
+              };
+
+              // Call the transport's handleRequest with both req and res
+              await httpTransport.handleRequest(req, response);
+              
+              // Return the Bun Response
+              return new Response(response._body, {
+                status: response._statusCode,
+                headers: response._headers
+              });
+            } catch (error) {
+              console.error('Error handling MCP request:', error);
+              return new Response(JSON.stringify({ 
+                jsonrpc: '2.0',
+                error: { 
+                  code: -32603, 
+                  message: 'Internal error' 
+                },
+                id: null 
+              }), {
+                status: 500,
+                headers: { 
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*'
+                }
+              });
+            }
+          }
+          
+          return new Response('Not Found', { status: 404 });
+        },
       });
       
-      // Health check endpoint
-      app.get('/health', (req, res) => {
-        res.json({ status: 'ok', service: 'fhir-jira-mcp' });
-      });
-      
-      // Start HTTP server
-      app.listen(options.port, () => {
-        console.error(`HTTP server listening on port ${options.port}`);
-        console.error(`MCP endpoint: http://localhost:${options.port}/mcp`);
-      });
+      console.error(`HTTP server listening on port ${options.port}`);
+      console.error(`MCP endpoint: http://localhost:${options.port}/mcp`);
     }
   }
 }

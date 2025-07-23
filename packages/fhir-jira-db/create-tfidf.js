@@ -1,6 +1,6 @@
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { TFIDFProcessor } from "./tfidf-processor.js";
-import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
+import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
 
 // Validate configuration parameters
 function validateConfig(config) {

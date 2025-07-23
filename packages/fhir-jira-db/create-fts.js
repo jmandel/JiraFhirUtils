@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import Database from "better-sqlite3";
+import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
-import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
+import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
 
 function setupFTS5Tables(db) {
     console.log("Dropping and creating FTS5 tables...");

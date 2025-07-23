@@ -1,10 +1,9 @@
-import Database from "better-sqlite3";
-import { glob } from "glob";
+import { Database } from "bun:sqlite";
 import { XMLParser } from "fast-xml-parser";
 import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
-import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
+import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
 
 // --- Configuration ---
 const UPDATE_SUBDIRECTORY = "updates"; // The subdirectory containing your update XML files
@@ -219,7 +218,9 @@ async function main() {
   db.exec("PRAGMA journal_mode = WAL;");
 
   const pattern = path.join(updatePath, XML_GLOB_PATTERN).replace(/\\/g, '/');
-  const files = await glob(pattern, { nodir: true });
+  const glob = new Bun.Glob(XML_GLOB_PATTERN);
+  const files = await Array.fromAsync(glob.scan({ cwd: updateDir, onlyFiles: true }))
+    .then(results => results.map(file => path.join(updateDir, file)));
 
   if (files.length === 0) {
     console.log(`No XML files found in subdirectory '${updateDir}'.`);

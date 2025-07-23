@@ -3,14 +3,24 @@
 
 This repo contains some tools and utilities to ease Jira ticket processing for FHIR.
 
-## extract-xml
+## Project Structure
 
-This folder contains utilities to create a SQLite database based on Jira tickets and compressed files with FHIR Core ticket XML exports:
+This project uses a monorepo structure with workspaces:
+
+- `packages/fhir-jira-db/` - Database utilities and processing scripts
+- `packages/fhir-jira-mcp/` - Model Context Protocol server
+- `packages/database-utils/` - Shared database utilities
+- `packages/jira-fhir-utils/` - Main utilities package
+
+## Database Processing (`packages/fhir-jira-db`)
+
+This package contains utilities to create a SQLite database based on Jira tickets and compressed files with FHIR Core ticket XML exports:
 * `extract-archives.js` extracts the included tar.gz archives into their respective directories for processing
 * `load-initial.js` loads the contents of the `bulk` directory, creates a database, and assumes no duplicates/conflicts
 * `load-updates.js` loads the contents of the `updates` directory into the database, updating existing records if they exist or adding new records if they do not
-* `create-fts.js` creates SQLite FTS5 full-text search tables for `issues` and `comments` from the database.
-* `create-tfidf.js` extracts TF-IDF data from Jira issues.
+* `create-fts.js` creates SQLite FTS5 full-text search tables for `issues` and `comments` from the database
+* `create-tfidf.js` extracts TF-IDF data from Jira issues
+* `download-issues.js` downloads issues directly from Jira using the REST API
 * `bulk.tar.gz` contains FHIR Core tickets FHIR-2839 through FHIR-51487, as of 2025.07.15
 * `updates.tar.gz` contains FHIR Core tickets that have changes on 2025.07.15
 
@@ -18,36 +28,36 @@ This folder contains utilities to create a SQLite database based on Jira tickets
   Use this script to extract the tar.gz archives before processing. It will extract `bulk.tar.gz` to the `bulk` directory and `updates.tar.gz` to the `updates` directory. Any existing directories will be replaced.
   **Run with:**
   ```sh
-  npm run extract-archives
+  bun run extract-archives
   # or
-  node extract-xml/extract-archives.js
+  bun packages/fhir-jira-db/extract-archives.js
   ```
 
 - **load-initial.js**
   Use this script to create a new database from scratch using the XML files in the `bulk` directory. It assumes there are no duplicate or conflicting issues.
   **Run with:**
   ```sh
-  npm run load-initial
+  bun run load-initial
   # or
-  node extract-xml/load-initial.js
+  bun packages/fhir-jira-db/load-initial.js
   ```
 
 - **load-updates.js**
   Use this script to apply updates to an existing database using XML files in the `updates` directory. It will insert new issues, update existing ones, and add new comments or custom fields as needed, without affecting unrelated records.
   **Run with:**
   ```sh
-  npm run load-updates
+  bun run load-updates
   # or
-  node extract-xml/load-updates.js
+  bun packages/fhir-jira-db/load-updates.js
   ```
 
 - **create-fts.js**
   After loading or updating the database, run this script to (re)create the FTS5 (Full-Text Search) tables for issues and comments, and populate them with the latest data. This enables fast, flexible text searching across issues and comments.
   **Run with:**
   ```sh
-  npm run create-fts
+  bun run create-fts
   # or
-  node extract-xml/create-fts.js
+  bun packages/fhir-jira-db/create-fts.js
   ```
   The script will drop and recreate the FTS5 tables, then fill them with the current contents of the database.
   Example queries you can run after setup:
@@ -60,9 +70,9 @@ This folder contains utilities to create a SQLite database based on Jira tickets
   This script implements TF-IDF (Term Frequency-Inverse Document Frequency) keyword extraction from JIRA issues. It analyzes text content from issue titles, descriptions, summaries, and custom fields to identify the most relevant keywords for each issue. The implementation includes FHIR-specific processing to preserve domain terminology.
   **Run with:**
   ```sh
-  npm run create-tfidf
+  bun run create-tfidf
   # or
-  node extract-xml/create-tfidf.js
+  bun packages/fhir-jira-db/create-tfidf.js
   ```
   The script will:
   - Create new database tables (`tfidf_keywords` and `tfidf_corpus_stats`)
@@ -83,16 +93,16 @@ This folder contains utilities to create a SQLite database based on Jira tickets
   - Find similar issues: Compare keyword vectors
   - Analyze keyword trends: Group by time periods
 
-Scripts require Node.js (v14 or higher) and npm. First install dependencies:
+Scripts require Bun (v1.0 or higher). First install dependencies:
 ```sh
-npm install
+bun install
 ```
 
 The scripts expect the relevant XML files to be present in their respective directories (`bulk` for initial load, `updates` for updates). The database file is named `jira_issues.sqlite` and will be created or updated in the current working directory.
 
 ## Database Path Configuration
 
-All extract-xml scripts now use a unified database path resolution system that supports:
+All database scripts now use a unified database path resolution system that supports:
 
 1. **Explicit database path** via `--db-path` command-line option
 2. **Automatic discovery** in these locations (in order):
@@ -107,13 +117,13 @@ All scripts support these common options:
 
 ```sh
 # Use explicit database path
-node extract-xml/load-initial.js --db-path /path/to/custom/database.sqlite
+bun packages/fhir-jira-db/load-initial.js --db-path /path/to/custom/database.sqlite
 
 # Check if database exists without running the script
-node extract-xml/load-initial.js --db-check
+bun packages/fhir-jira-db/load-initial.js --db-check
 
 # Show help
-node extract-xml/load-initial.js --help
+bun packages/fhir-jira-db/load-initial.js --help
 ```
 
 ### Script-Specific Options
@@ -128,18 +138,18 @@ node extract-xml/load-initial.js --help
 
 ```sh
 # Load initial data from custom directory with custom database
-node extract-xml/load-initial.js --db-path ./custom.sqlite --initial-dir ./my-bulk-data
+bun packages/fhir-jira-db/load-initial.js --db-path ./custom.sqlite --initial-dir ./my-bulk-data
 
 # Create TF-IDF with custom settings
-node extract-xml/create-tfidf.js --db-path ./prod.sqlite --batch-size 500 --top-keywords 20
+bun packages/fhir-jira-db/create-tfidf.js --db-path ./prod.sqlite --batch-size 500 --top-keywords 20
 
 # Check if database exists before processing
-node extract-xml/create-fts.js --db-check
+bun packages/fhir-jira-db/create-fts.js --db-check
 ```
 
-## fhir-jira-mcp
+## MCP Server (`packages/fhir-jira-mcp`)
 
-This folder contains a Model Context Protocol (MCP) server that provides read-only access to the JIRA issues SQLite database. The server enables browsing work queues and searching for related tickets through various tools.
+This package contains a Model Context Protocol (MCP) server that provides read-only access to the JIRA issues SQLite database. The server enables browsing work queues and searching for related tickets through various tools.
 
 ### Features
 - Browse work queues with filtering by project, work group, resolution, status, and assignee
@@ -149,23 +159,62 @@ This folder contains a Model Context Protocol (MCP) server that provides read-on
 
 ### Installation & Usage
 ```sh
-cd fhir-jira-mcp
-npm install
-npm start  # For stdio mode (Claude Desktop)
-npm run start:http  # For HTTP mode on port 3000
+cd packages/fhir-jira-mcp
+bun install
+bun start  # For stdio mode (Claude Desktop)
+bun run start:http  # For HTTP mode on port 3000
 ```
 
-The MCP server now uses the same unified database path resolution system as the extract-xml scripts:
+The MCP server now uses the same unified database path resolution system as the database scripts:
 
 ```sh
 # Use explicit database path
-node fhir-jira-mcp/index.js --db-path /path/to/custom/database.sqlite
+bun packages/fhir-jira-mcp/index.js --db-path /path/to/custom/database.sqlite
 
 # Start HTTP server on custom port with custom database
-node fhir-jira-mcp/index.js --db-path ./prod.sqlite --port 8080
+bun packages/fhir-jira-mcp/index.js --db-path ./prod.sqlite --port 8080
 
 # Check database connectivity
-node fhir-jira-mcp/index.js --db-check
+bun packages/fhir-jira-mcp/index.js --db-check
 ```
 
-The server operates in read-only mode for database safety and will automatically discover the database file using the same fallback locations as the extract-xml scripts. See the [fhir-jira-mcp README](fhir-jira-mcp/README.md) for detailed configuration and usage instructions, including Claude Desktop integration and HTTP API documentation.
+The server operates in read-only mode for database safety and will automatically discover the database file using the same fallback locations as the database scripts. See the [fhir-jira-mcp README](packages/fhir-jira-mcp/README.md) for detailed configuration and usage instructions, including Claude Desktop integration and HTTP API documentation.
+
+### Claude Code Integration
+
+To use the MCP server with Claude Code, add it using the `claude mcp add` command:
+
+```sh
+claude mcp add FhirJira "bun" "packages/fhir-jira-mcp/index.js"
+```
+
+This configures Claude Code to run the MCP server in stdio mode using Bun. The server will automatically discover your database file or you can specify a custom path by modifying the command to include `--db-path`:
+
+```sh
+claude mcp add FhirJira "bun" "packages/fhir-jira-mcp/index.js" "--db-path" "/path/to/custom/database.sqlite"
+```
+
+## Quick Start
+
+1. Install dependencies:
+   ```sh
+   bun install
+   ```
+
+2. Extract archives and load initial data:
+   ```sh
+   bun run extract-archives
+   bun run load-initial
+   bun run create-fts
+   ```
+
+3. (Optional) Download latest issues from Jira:
+   ```sh
+   bun run download-issues
+   ```
+
+4. Start the MCP server:
+   ```sh
+   cd packages/fhir-jira-mcp
+   bun start
+   ```

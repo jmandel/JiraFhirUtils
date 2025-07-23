@@ -1,10 +1,9 @@
-import Database from "better-sqlite3";
-import { glob } from "glob";
+import { Database } from "bun:sqlite";
 import { XMLParser } from "fast-xml-parser";
 import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
-import { getDatabasePath, setupDatabaseCliArgs } from "./database-utils.js";
+import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
 
 // --- Configuration ---
 const INITIAL_SUBDIRECTORY = "bulk"; // The subdirectory containing the initial XML files
@@ -259,7 +258,9 @@ async function main() {
   }
 
   const pattern = path.join(initialPath, XML_GLOB_PATTERN).replace(/\\/g, '/');
-  const files = await glob(pattern, { nodir: true });
+  const glob = new Bun.Glob(pattern);
+  const files = await Array.fromAsync(glob.scan({ cwd: initialDir, onlyFiles: true }))
+    .then(results => results.map(file => path.join(initialDir, file)));
 
   if (files.length === 0) {
     console.log(`No XML files found matching pattern '${XML_GLOB_PATTERN}' in subdirectory '${initialDir}'.`);
