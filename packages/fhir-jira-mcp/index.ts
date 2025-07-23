@@ -526,7 +526,7 @@ class JiraIssuesMCPServer {
             total_keyword_related: finalMatches.length,
             keywords: keywords || '',
             issues_linked: linkedIssues,
-            issues_keyword_related: finalMatches.map(key => ({ issue_key: key })),
+            issues_keyword_related: finalMatches,
           }, null, 2)
         }]
       };
