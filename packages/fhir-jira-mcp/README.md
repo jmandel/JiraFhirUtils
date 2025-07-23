@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server for read-only access to the JIRA issues SQLite database. This server provides tools to browse work queues and search for related tickets.
 
-The server supports both stdio (default) and HTTP transport modes, allowing flexible integration with MCP clients.
+The server uses STDIO transport for integration with MCP clients like Claude Desktop.
 
 ## Features
 
@@ -29,25 +29,87 @@ The server supports both stdio (default) and HTTP transport modes, allowing flex
 
 ### Running the Server
 
-#### Stdio Mode (Default)
-Start the MCP server in stdio mode for use with Claude Desktop or other stdio-based MCP clients:
+Start the MCP server for use with Claude Desktop or other STDIO-based MCP clients:
 ```bash
-npm start
+bun start
 ```
 
-#### HTTP Mode
-Start the MCP server with an HTTP endpoint:
+For development with auto-reload:
 ```bash
-# Run on port 3000 (using npm script)
-npm run start:http
-
-# Or specify a custom port
-node index.js --port 8080
-# or
-node index.js -p 8080
+bun run dev
 ```
 
-The server will start both stdio and HTTP transports when a port is specified. The HTTP endpoint will be available at `http://localhost:<port>/mcp`.
+### HTTP Wrapper
+
+The package includes an MCP HTTP wrapper that implements the [Streamable HTTP transport](mcp-transports.md) for STDIO-based MCP servers.
+
+#### Usage
+
+```bash
+# Start with default settings (port 3000, default MCP server)
+bun mcp-http.ts
+
+# Specify custom port and MCP command
+bun mcp-http.ts --port 8080 --mcp-command "node my-mcp-server.js"
+```
+
+#### Options
+
+- `--port, -p <number>`: HTTP listen port (default: 3000)
+- `--mcp-command, -c <string>`: MCP server command to execute (default: `bun index.ts`)
+
+#### Features
+
+- ✅ **Full Streamable HTTP Transport**: Implements the complete MCP Streamable HTTP specification
+- ✅ **Session Management**: Handles client sessions with unique session IDs
+- ✅ **Bidirectional Communication**: Supports both client-to-server and server-to-client messages
+- ✅ **SSE Streaming**: Server-Sent Events for real-time communication
+- ✅ **Auto-restart**: Automatically restarts the MCP subprocess if it crashes
+- ✅ **Graceful Shutdown**: Proper cleanup of resources and sessions
+- ✅ **Error Handling**: Robust error handling and recovery
+
+#### Endpoints
+
+- `POST /mcp`: Send JSON-RPC messages to the MCP server
+- `GET /mcp`: Open SSE stream for server-initiated messages  
+- `DELETE /mcp`: Terminate a client session
+- `OPTIONS /mcp`: CORS preflight support
+
+#### Testing HTTP Wrapper
+
+A test script is included to verify functionality:
+
+```bash
+# Start the wrapper
+bun mcp-http.ts --port 3001 &
+
+# Run tests
+bun test-http.ts
+
+# Stop the wrapper
+pkill -f mcp-http.ts
+```
+
+#### Protocol Compliance
+
+This wrapper implements the MCP Streamable HTTP transport specification including:
+
+- Session ID management via `Mcp-Session-Id` headers
+- Support for both JSON and SSE response modes
+- Proper handling of requests, responses, and notifications
+- Message correlation and routing
+- Connection resumability via `Last-Event-ID` headers
+- CORS support for web clients
+
+#### Architecture
+
+The wrapper consists of several key components:
+
+- **MCPSubprocess**: Manages the lifecycle of the STDIO MCP server process
+- **SessionManager**: Tracks client sessions and correlates requests/responses
+- **MCPHttpWrapper**: Main HTTP server that bridges HTTP clients to the STDIO server
+
+The wrapper maintains one long-running subprocess and multiplexes HTTP client connections to it, handling the protocol conversion between HTTP and STDIO transparently.
 
 ### Configuring with Claude Desktop
 
@@ -57,62 +119,14 @@ Add the following to your Claude Desktop configuration file (`claude_desktop_con
 {
   "mcpServers": {
     "fhir-jira": {
-      "command": "node",
-      "args": ["/path/to/fhir-jira-mcp/index.js"],
+      "command": "bun",
+      "args": ["/path/to/fhir-jira-mcp/index.ts"],
       "env": {}
     }
   }
 }
 ```
 
-## HTTP API
-
-When running in HTTP mode, the server exposes the following endpoints:
-
-- `POST /mcp` - Main MCP endpoint for all tool requests
-- `GET /health` - Health check endpoint
-
-### Authentication
-The HTTP server operates in stateless mode with no session management. All requests are independent.
-
-### CORS
-The server is configured with permissive CORS settings to allow requests from any origin.
-
-### Example HTTP Request
-
-```bash
-# List issues
-curl -X POST http://localhost:3000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "tools/call",
-    "params": {
-      "name": "list_issues",
-      "arguments": {
-        "project_key": "FHIR",
-        "limit": 10
-      }
-    },
-    "id": 1
-  }'
-
-# Search issues
-curl -X POST http://localhost:3000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "tools/call",
-    "params": {
-      "name": "search_issues",
-      "arguments": {
-        "query": "patient resource",
-        "limit": 5
-      }
-    },
-    "id": 2
-  }'
-```
 
 ## Available MCP Tools
 
@@ -142,33 +156,50 @@ The FHIR JIRA MCP server provides the following tools for interacting with the J
 }
 ```
 
-### 2. `search_issues`
-**Description:** Search for tickets using SQLite FTS5 testing against issue fields
+### 2. `search_issues_by_keywords`
+**Description:** Search for tickets using SQLite FTS5 testing for keywords in multiple fields
 
 **Parameters:**
-- `query` (required): Search query string
+- `keywords` (required): Keywords to search for in issues
 - `search_fields` (optional): Array of fields to search in. Options: `title`, `description`, `summary`, `resolution_description`. Defaults to all fields.
-- `limit` (optional): Maximum number of results (default: 50)
+- `limit` (optional): Maximum number of results (default: 20)
 
 **Example:**
 ```json
 {
-  "tool": "search_issues",
+  "tool": "search_issues_by_keywords",
   "arguments": {
-    "query": "patient resource",
+    "keywords": "patient resource",
     "search_fields": ["title", "summary"],
     "limit": 10
   }
 }
 ```
 
-### 3. `find_related_issues`
-**Description:** Find issues related to a specific issue by key, using FTS5 for efficient searching
+### 3. `list_related_issues`
+**Description:** List issues related to a specific issue by key
 
 **Parameters:**
 - `issue_key` (required): The issue key to find related issues for
-- `keywords` (optional): Keywords to search for in related issues
-- `limit` (optional): Maximum number of results (default: 50)
+- `limit` (optional): Maximum number of results (default: 10)
+
+**Example:**
+```json
+{
+  "tool": "list_related_issues",
+  "arguments": {
+    "issue_key": "FHIR-123",
+    "limit": 10
+  }
+}
+```
+
+### 4. `find_related_issues`
+**Description:** Find issues related to a specific issue by key
+
+**Parameters:**
+- `issue_key` (required): The issue key to find related issues for
+- `limit` (optional): Maximum number of results (default: 10)
 
 **Example:**
 ```json
@@ -176,13 +207,12 @@ The FHIR JIRA MCP server provides the following tools for interacting with the J
   "tool": "find_related_issues",
   "arguments": {
     "issue_key": "FHIR-123",
-    "keywords": "patient observation",
     "limit": 10
   }
 }
 ```
 
-### 4. `get_issue_details`
+### 5. `get_issue_details`
 **Description:** Get detailed information about a specific issue by key
 
 **Parameters:**
@@ -198,7 +228,7 @@ The FHIR JIRA MCP server provides the following tools for interacting with the J
 }
 ```
 
-### 5. `get_issue_comments`
+### 6. `get_issue_comments`
 **Description:** Get comments for a specific issue
 
 **Parameters:**
@@ -214,7 +244,7 @@ The FHIR JIRA MCP server provides the following tools for interacting with the J
 }
 ```
 
-### 6. `list_project_keys`
+### 7. `list_project_keys`
 **Description:** List all unique project keys in the database
 
 **Parameters:** None
@@ -227,7 +257,7 @@ The FHIR JIRA MCP server provides the following tools for interacting with the J
 }
 ```
 
-### 7. `list_work_groups`
+### 8. `list_work_groups`
 **Description:** List all unique work groups in the database
 
 **Parameters:** None
@@ -249,16 +279,40 @@ The server expects a SQLite database (`jira_issues.sqlite`) in the parent direct
 - `custom_fields`: Custom field values for issues (including work_group, related_url, etc.)
 - `issues_fts`: Full-text search index for efficient searching
 
-## Notes
+## Testing
 
-- The server operates in read-only mode for database safety
-- Full-text search uses SQLite's FTS5 extension for efficient querying
-- All responses are returned as JSON-formatted text
-- The database path is hardcoded to `../jira_issues.sqlite` relative to the server location
-- Note that if you want to test the MCP Server, a tool such as [ModelContextProtocol/inspector](https://github.com/modelcontextprotocol/inspector) is useful:
+### Running Tests
+
+The project includes database connectivity tests:
+
+```bash
+# Run database connectivity test
+bun run test:db
+```
+
+### Test Coverage
+
+The tests cover:
+- ✅ **Database connectivity**: Verifies connection to SQLite database
+- ✅ **Basic queries**: Tests issue counts, project keys, and work groups
+- ✅ **FTS5 functionality**: Validates full-text search index
+
+### Manual Testing
+
+For manual testing of the MCP protocol, use the MCP Inspector:
 ```sh
 npx @modelcontextprotocol/inspector
 ```
+
+Or test directly with Claude Desktop by adding the server to your configuration.
+
+## Notes
+
+- The server operates in read-only mode for database safety
+- Uses STDIO transport for communication with MCP clients
+- Full-text search uses SQLite's FTS5 extension for efficient querying
+- All responses are returned as JSON-formatted text
+- The database path can be specified with `--db-path` or auto-discovered from standard locations
 
 ## Troubleshooting
 

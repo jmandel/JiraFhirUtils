@@ -2,8 +2,8 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { ListToolsRequestSchema, CallToolRequestSchema, CallToolRequest, CallToolResult, ListToolsResult } from '@modelcontextprotocol/sdk/types.js';
+import { ListToolsRequestSchema, CallToolRequestSchema,  } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolRequest, CallToolResult, ListToolsResult, } from '@modelcontextprotocol/sdk/types.js';
 import { Database } from 'bun:sqlite';
 import path from 'path';
 import fs from 'fs';
@@ -24,7 +24,6 @@ const _defaultSearchFields = [
 type SearchField = typeof _defaultSearchFields[number];
 
 interface DatabaseOptions {
-  port?: number;
   [key: string]: any;
 }
 
@@ -104,17 +103,7 @@ interface WorkGroupRecord {
 let options: DatabaseOptions = {};
 
 async function initializeOptions(): Promise<void> {
-  options = await setupDatabaseCliArgs('fhir-jira-mcp', 'FHIR JIRA MCP Server', {
-    '-p, --port <port>': {
-      description: 'HTTP server port (optional)',
-      defaultValue: undefined
-    }
-  });
-
-  // Convert port to number if provided
-  if (options.port) {
-    options.port = parseInt(options.port as string);
-  }
+  options = await setupDatabaseCliArgs('fhir-jira-mcp', 'FHIR JIRA MCP Server');
 }
 
 class JiraIssuesMCPServer {
@@ -914,138 +903,10 @@ class JiraIssuesMCPServer {
   async run(): Promise<void> {
     await this.init();
     
-    // Always start stdio transport
+    // Start stdio transport
     const stdioTransport = new StdioServerTransport();
     await this.server.connect(stdioTransport);
     console.error('FHIR JIRA MCP Server running on stdio');
-    
-    // Start HTTP server if port is specified
-    if (options.port) {
-      const httpTransport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => Math.random().toString(36).substring(2, 15)
-      });
-      await this.server.connect(httpTransport);
-      
-      Bun.serve({
-        port: options.port,
-        async fetch(req: Request): Promise<Response> {
-          const url = new URL(req.url);
-          
-          // Health check endpoint
-          if (url.pathname === '/health' && req.method === 'GET') {
-            return new Response(JSON.stringify({ status: 'ok', service: 'fhir-jira-mcp' }), {
-              headers: { 'Content-Type': 'application/json' }
-            });
-          }
-          
-          // Handle CORS preflight requests
-          if (req.method === 'OPTIONS') {
-            return new Response(null, {
-              status: 200,
-              headers: {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Credentials': 'true',
-                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization',
-                'Access-Control-Expose-Headers': 'Mcp-Session-Id',
-              }
-            });
-          }
-          
-          // Handle MCP requests at /mcp endpoint
-          if (url.pathname === '/mcp') {
-            // Check if client sent proper Accept header
-            const acceptHeader = req.headers.get('accept') || '';
-            if (!acceptHeader.includes('application/json') || !acceptHeader.includes('text/event-stream')) {
-              return new Response(JSON.stringify({
-                jsonrpc: '2.0',
-                error: {
-                  code: -32000,
-                  message: 'Not Acceptable: Client must accept both application/json and text/event-stream'
-                },
-                id: null
-              }), {
-                status: 406,
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Access-Control-Allow-Origin': '*'
-                }
-              });
-            }
-            
-            try {
-              // Create a proper HTTP-like response interface for the transport
-              interface MockResponse {
-                writeHead: (statusCode: number, headers?: Record<string, string>) => void;
-                setHeader: (name: string, value: string) => void;
-                write: (chunk: string) => void;
-                end: (chunk?: string) => void;
-                _statusCode: number;
-                _headers: Record<string, string>;
-                _body: string;
-                _ended: boolean;
-              }
-
-              const response: MockResponse = {
-                writeHead: (statusCode: number, headers: Record<string, string> = {}) => {
-                  response._statusCode = statusCode;
-                  response._headers = { ...response._headers, ...headers };
-                },
-                setHeader: (name: string, value: string) => {
-                  response._headers = response._headers || {};
-                  response._headers[name] = value;
-                },
-                write: (chunk: string) => {
-                  response._body = (response._body || '') + chunk;
-                },
-                end: (chunk?: string) => {
-                  if (chunk) response._body = (response._body || '') + chunk;
-                  response._ended = true;
-                },
-                _statusCode: 200,
-                _headers: {
-                  'Access-Control-Allow-Origin': '*',
-                  'Access-Control-Allow-Credentials': 'true'
-                },
-                _body: '',
-                _ended: false
-              };
-
-              // Call the transport's handleRequest with both req and res
-              await httpTransport.handleRequest(req as any, response as any);
-              
-              // Return the Bun Response
-              return new Response(response._body, {
-                status: response._statusCode,
-                headers: response._headers
-              });
-            } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              console.error('Error handling MCP request:', errorMessage);
-              return new Response(JSON.stringify({ 
-                jsonrpc: '2.0',
-                error: { 
-                  code: -32603, 
-                  message: 'Internal error' 
-                },
-                id: null 
-              }), {
-                status: 500,
-                headers: { 
-                  'Content-Type': 'application/json',
-                  'Access-Control-Allow-Origin': '*'
-                }
-              });
-            }
-          }
-          
-          return new Response('Not Found', { status: 404 });
-        },
-      });
-      
-      console.error(`HTTP server listening on port ${options.port}`);
-      console.error(`MCP endpoint: http://localhost:${options.port}/mcp`);
-    }
   }
 }
 

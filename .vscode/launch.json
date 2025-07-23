@@ -8,63 +8,63 @@
             "type": "node-terminal",
             "name": "Launch MCP",
             "request": "launch",
-            "command": "node fhir-jira-mcp\\index.js",
+            "command": "bun fhir-jira-mcp\\index.js",
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "node-terminal",
             "name": "Launch MCP:http",
             "request": "launch",
-            "command": "npm run start:http",
+            "command": "bun run start:http",
             "cwd": "${workspaceFolder}\\fhir-jira-mcp"
         },
         {
             "type": "node-terminal",
             "name": "Create FTS",
             "request": "launch",
-            "command": "npm run create-fts",
+            "command": "bun run create-fts",
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "node-terminal",
             "name": "Create TFIDF",
             "request": "launch",
-            "command": "npm run create-tfidf",
+            "command": "bun run create-tfidf",
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "node-terminal",
             "name": "Extract Archives",
             "request": "launch",
-            "command": "npm run extract-archives",
+            "command": "bun run extract-archives",
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "node-terminal",
             "name": "Load Initial",
             "request": "launch",
-            "command": "node extract-xml\\load-initial.js",
+            "command": "bun extract-xml\\load-initial.js",
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "node-terminal",
             "name": "Load Updates",
             "request": "launch",
-            "command": "node extract-xml\\load-updates.js",
+            "command": "bun extract-xml\\load-updates.js",
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "node-terminal",
             "name": "Test TFIDF",
             "request": "launch",
-            "command": "node test-tfidf.js",
+            "command": "bun test-tfidf.js",
             "cwd": "${workspaceFolder}\\extract-xml"
         },
         {
             "type": "node-terminal",
             "name": "TFIDF Processor",
             "request": "launch",
-            "command": "node tfidf-processor.js",
+            "command": "bun tfidf-processor.js",
             "cwd": "${workspaceFolder}\\extract-xml"
         }
     ]

@@ -158,12 +158,30 @@ This package contains a Model Context Protocol (MCP) server that provides read-o
 - List all project keys and work groups in the database
 
 ### Installation & Usage
+
+First, install dependencies:
 ```sh
 cd packages/fhir-jira-mcp
 bun install
-bun start  # For stdio mode (Claude Desktop)
-bun run start:http  # For HTTP mode on port 3000
 ```
+
+#### STDIO Mode (For Claude Desktop and MCP clients)
+```sh
+bun start
+# or
+bun packages/fhir-jira-mcp/index.ts
+```
+
+STDIO mode is the default and recommended mode for MCP clients like Claude Desktop. The server communicates via standard input/output using JSON-RPC messages.
+
+#### HTTP Mode (For testing and web integration)
+```sh
+bun packages/fhir-jira-mcp/mcp-http.ts
+# or
+bun packages/fhir-jira-mcp/mcp-http.ts --port 3000
+```
+
+HTTP mode starts a web server that wraps the STDIO MCP server and exposes it via HTTP endpoints. This is useful for testing, debugging, or integrating with web applications. The server runs on port 3000 by default, or you can specify a custom port with `--port <number>`. The HTTP wrapper spawns the main MCP server as a subprocess and handles JSON-RPC message routing between HTTP clients and the MCP server.
 
 The MCP server now uses the same unified database path resolution system as the database scripts:
 
@@ -172,7 +190,7 @@ The MCP server now uses the same unified database path resolution system as the 
 bun packages/fhir-jira-mcp/index.ts --db-path /path/to/custom/database.sqlite
 
 # Start HTTP server on custom port with custom database
-bun packages/fhir-jira-mcp/index.ts --db-path ./prod.sqlite --port 8080
+bun packages/fhir-jira-mcp/mcp-http.ts --port 8080 --mcp-command "bun packages/fhir-jira-mcp/index.ts --db-path ./prod.sqlite"
 
 # Check database connectivity
 bun packages/fhir-jira-mcp/index.ts --db-check

@@ -18,7 +18,7 @@ interface WorkGroupResult {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DB_PATH: string = path.join(__dirname, '..', 'jira_issues.sqlite');
+const DB_PATH: string = path.join(__dirname, '..', '..', 'jira_issues.sqlite');
 
 console.log('Testing database connection...');
 console.log(`Database path: ${DB_PATH}`);

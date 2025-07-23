@@ -9,8 +9,8 @@
   },
   "scripts": {
     "start": "bun run index.ts",
-    "start:http": "bun run index.ts --port 3000",
-    "dev": "bun --watch index.ts"
+    "dev": "bun --watch index.ts",
+    "test:db": "bun test-db.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
