@@ -1,16 +1,114 @@
 import { Database } from "bun:sqlite";
 import { getDatabasePath } from "@jira-fhir-utils/database-utils";
 
+// Type definitions for database records
+interface KeywordRecord {
+  keyword: string;
+  tfidf_score: number;
+  tf_score: number;
+  idf_score: number;
+}
+
+interface KeywordSearchResult {
+  issue_key: string;
+  matching_keywords: string;
+  total_score: number;
+  match_count: number;
+}
+
+interface SimilarIssueResult {
+  issue_key: string;
+  common_keywords: string;
+  similarity_score: number;
+  common_count: number;
+  title: string;
+  status: string;
+}
+
+interface KeywordTrendResult {
+  period: string;
+  issue_count: number;
+  avg_score: number;
+  max_score: number;
+}
+
+interface ProjectKeywordResult {
+  keyword: string;
+  issue_count: number;
+  avg_score: number;
+  total_score: number;
+}
+
+interface TopKeywordResult {
+  keyword: string;
+  frequency: number;
+}
+
+interface KeywordStatsFrequency {
+  keyword: string;
+  issue_count: number;
+  avg_score: number;
+}
+
+interface KeywordStatsScore {
+  keyword: string;
+  avg_score: number;
+  issue_count: number;
+}
+
+interface KeywordStats {
+  totalKeywords: number;
+  totalOccurrences: number;
+  issuesWithKeywords: number;
+  avgKeywordsPerIssue: number;
+  topKeywordsByFrequency: KeywordStatsFrequency[];
+  topKeywordsByScore: KeywordStatsScore[];
+}
+
+interface VisualizationNode {
+  id: string;
+  label: string;
+  value: number;
+  score: number;
+}
+
+interface VisualizationData {
+  nodes: VisualizationNode[];
+  metadata: {
+    totalKeywords: number;
+    maxFrequency: number;
+    minFrequency: number;
+  };
+}
+
+interface KeywordVisualizationResult {
+  keyword: string;
+  frequency: number;
+  avg_score: number;
+  max_score: number;
+}
+
+type GroupByPeriod = 'day' | 'week' | 'month' | 'year';
+
 export class KeywordUtils {
-  constructor(dbPath = null) {
-    const databasePath = dbPath || getDatabasePath();
-    this.db = new Database(databasePath);
+  private db: Database;
+
+  constructor(dbPath: string) {
+    this.db = new Database(dbPath);
+  }
+
+  /**
+   * Create a new KeywordUtils instance with database path resolution
+   */
+  static async create(dbPath: string | null = null): Promise<KeywordUtils> {
+    const databasePath = dbPath || await getDatabasePath();
+    return new KeywordUtils(databasePath);
   }
 
   /**
    * Get top keywords for a specific issue
    */
-  getIssueKeywords(issueKey, limit = 10) {
+  getIssueKeywords(issueKey: string, limit: number = 10): KeywordRecord[] {
     const query = `
       SELECT 
         keyword,
@@ -23,18 +121,21 @@ export class KeywordUtils {
       LIMIT ?
     `;
     
-    return this.db.prepare(query).all(issueKey, limit);
+    return this.db.prepare(query).all(issueKey, limit) as KeywordRecord[];
   }
 
   /**
    * Find issues by keywords
    */
-  searchByKeywords(keywords, limit = 20) {
+  searchByKeywords(keywords: string | string[], limit: number = 20): KeywordSearchResult[] {
+    let keywordArray: string[];
     if (!Array.isArray(keywords)) {
-      keywords = [keywords];
+      keywordArray = [keywords];
+    } else {
+      keywordArray = keywords;
     }
     
-    const placeholders = keywords.map(() => '?').join(',');
+    const placeholders = keywordArray.map(() => '?').join(',');
     const query = `
       SELECT 
         issue_key,
@@ -48,13 +149,13 @@ export class KeywordUtils {
       LIMIT ?
     `;
     
-    return this.db.prepare(query).all(...keywords, limit);
+    return this.db.prepare(query).all(...keywordArray, limit) as KeywordSearchResult[];
   }
 
   /**
    * Find similar issues based on keyword overlap
    */
-  findSimilarIssues(issueKey, limit = 10) {
+  findSimilarIssues(issueKey: string, limit: number = 10): SimilarIssueResult[] {
     // First get keywords for the source issue
     const sourceKeywords = this.getIssueKeywords(issueKey, 20);
     
@@ -63,7 +164,7 @@ export class KeywordUtils {
     }
     
     // Calculate weighted keyword list
-    const keywordWeights = new Map();
+    const keywordWeights = new Map<string, number>();
     sourceKeywords.forEach(kw => {
       keywordWeights.set(kw.keyword, kw.tfidf_score);
     });
@@ -90,20 +191,23 @@ export class KeywordUtils {
     `;
     
     // Build parameters with weights
-    const params = [];
+    const params: (string | number)[] = [];
     keywords.forEach(kw => {
-      params.push(keywordWeights.get(kw));
+      const weight = keywordWeights.get(kw);
+      if (weight !== undefined) {
+        params.push(weight);
+      }
     });
     params.push(...keywords, issueKey, limit);
     
-    return this.db.prepare(query).all(...params);
+    return this.db.prepare(query).all(...params) as SimilarIssueResult[];
   }
 
   /**
    * Get keyword trends over time
    */
-  getKeywordTrends(keyword, groupBy = 'month') {
-    let dateFormat;
+  getKeywordTrends(keyword: string, groupBy: GroupByPeriod = 'month'): KeywordTrendResult[] {
+    let dateFormat: string;
     switch (groupBy) {
       case 'day':
         dateFormat = '%Y-%m-%d';
@@ -134,13 +238,13 @@ export class KeywordUtils {
       ORDER BY period
     `;
     
-    return this.db.prepare(query).all(keyword);
+    return this.db.prepare(query).all(keyword) as KeywordTrendResult[];
   }
 
   /**
    * Get top keywords for a project
    */
-  getProjectKeywords(projectKey, limit = 20) {
+  getProjectKeywords(projectKey: string, limit: number = 20): ProjectKeywordResult[] {
     const query = `
       SELECT 
         tk.keyword,
@@ -155,13 +259,13 @@ export class KeywordUtils {
       LIMIT ?
     `;
     
-    return this.db.prepare(query).all(projectKey, limit);
+    return this.db.prepare(query).all(projectKey, limit) as ProjectKeywordResult[];
   }
 
   /**
    * Get keyword co-occurrence matrix
    */
-  getKeywordCooccurrence(topN = 50) {
+  getKeywordCooccurrence(topN: number = 50): Map<string, number> {
     // Get top N keywords
     const topKeywords = this.db.prepare(`
       SELECT 
@@ -171,10 +275,10 @@ export class KeywordUtils {
       GROUP BY keyword
       ORDER BY frequency DESC
       LIMIT ?
-    `).all(topN);
+    `).all(topN) as TopKeywordResult[];
     
     const keywords = topKeywords.map(k => k.keyword);
-    const cooccurrence = new Map();
+    const cooccurrence = new Map<string, number>();
     
     // For each pair of keywords, count co-occurrences
     for (let i = 0; i < keywords.length; i++) {
@@ -182,16 +286,16 @@ export class KeywordUtils {
         const kw1 = keywords[i];
         const kw2 = keywords[j];
         
-        const count = this.db.prepare(`
+        const result = this.db.prepare(`
           SELECT COUNT(DISTINCT t1.issue_key) as count
           FROM tfidf_keywords t1
           JOIN tfidf_keywords t2 ON t1.issue_key = t2.issue_key
           WHERE t1.keyword = ? AND t2.keyword = ?
-        `).get(kw1, kw2).count;
+        `).get(kw1, kw2) as { count: number };
         
-        if (count > 0) {
+        if (result.count > 0) {
           const key = `${kw1}|${kw2}`;
-          cooccurrence.set(key, count);
+          cooccurrence.set(key, result.count);
         }
       }
     }
@@ -202,23 +306,26 @@ export class KeywordUtils {
   /**
    * Get keyword statistics
    */
-  getKeywordStats() {
-    const stats = {};
+  getKeywordStats(): KeywordStats {
+    const stats: Partial<KeywordStats> = {};
     
     // Total keywords
-    stats.totalKeywords = this.db.prepare(
+    const totalKeywordsResult = this.db.prepare(
       "SELECT COUNT(DISTINCT keyword) as count FROM tfidf_keywords"
-    ).get().count;
+    ).get() as { count: number };
+    stats.totalKeywords = totalKeywordsResult.count;
     
     // Total keyword occurrences
-    stats.totalOccurrences = this.db.prepare(
+    const totalOccurrencesResult = this.db.prepare(
       "SELECT COUNT(*) as count FROM tfidf_keywords"
-    ).get().count;
+    ).get() as { count: number };
+    stats.totalOccurrences = totalOccurrencesResult.count;
     
     // Issues with keywords
-    stats.issuesWithKeywords = this.db.prepare(
+    const issuesWithKeywordsResult = this.db.prepare(
       "SELECT COUNT(DISTINCT issue_key) as count FROM tfidf_keywords"
-    ).get().count;
+    ).get() as { count: number };
+    stats.issuesWithKeywords = issuesWithKeywordsResult.count;
     
     // Average keywords per issue
     stats.avgKeywordsPerIssue = stats.totalOccurrences / stats.issuesWithKeywords;
@@ -233,7 +340,7 @@ export class KeywordUtils {
       GROUP BY keyword
       ORDER BY issue_count DESC
       LIMIT 10
-    `).all();
+    `).all() as KeywordStatsFrequency[];
     
     // Top keywords by average TF-IDF score
     stats.topKeywordsByScore = this.db.prepare(`
@@ -246,15 +353,15 @@ export class KeywordUtils {
       HAVING issue_count >= 5
       ORDER BY avg_score DESC
       LIMIT 10
-    `).all();
+    `).all() as KeywordStatsScore[];
     
-    return stats;
+    return stats as KeywordStats;
   }
 
   /**
    * Export keywords for visualization
    */
-  exportKeywordsForVisualization(limit = 100) {
+  exportKeywordsForVisualization(limit: number = 100): VisualizationData {
     const keywords = this.db.prepare(`
       SELECT 
         keyword,
@@ -265,7 +372,7 @@ export class KeywordUtils {
       GROUP BY keyword
       ORDER BY frequency DESC
       LIMIT ?
-    `).all(limit);
+    `).all(limit) as KeywordVisualizationResult[];
     
     // Format for common visualization libraries
     return {
@@ -286,28 +393,28 @@ export class KeywordUtils {
   /**
    * Close database connection
    */
-  close() {
+  close(): void {
     this.db.close();
   }
 }
 
 // Export convenience functions
-export function getIssueKeywords(issueKey, limit = 10, dbPath = null) {
-  const utils = new KeywordUtils(dbPath);
+export async function getIssueKeywords(issueKey: string, limit: number = 10, dbPath: string | null = null): Promise<KeywordRecord[]> {
+  const utils = await KeywordUtils.create(dbPath);
   const results = utils.getIssueKeywords(issueKey, limit);
   utils.close();
   return results;
 }
 
-export function findSimilarIssues(issueKey, limit = 10, dbPath = null) {
-  const utils = new KeywordUtils(dbPath);
+export async function findSimilarIssues(issueKey: string, limit: number = 10, dbPath: string | null = null): Promise<SimilarIssueResult[]> {
+  const utils = await KeywordUtils.create(dbPath);
   const results = utils.findSimilarIssues(issueKey, limit);
   utils.close();
   return results;
 }
 
-export function searchByKeywords(keywords, limit = 20, dbPath = null) {
-  const utils = new KeywordUtils(dbPath);
+export async function searchByKeywords(keywords: string | string[], limit: number = 20, dbPath: string | null = null): Promise<KeywordSearchResult[]> {
+  const utils = await KeywordUtils.create(dbPath);
   const results = utils.searchByKeywords(keywords, limit);
   utils.close();
   return results;

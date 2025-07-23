@@ -22,6 +22,31 @@
     "packages/database-utils": {
       "name": "@jira-fhir-utils/database-utils",
       "version": "1.0.0",
+      "dependencies": {
+        "commander": "^12.1.0",
+      },
+      "devDependencies": {
+        "bun-types": "latest",
+      },
+    },
+    "packages/fhir-jira-db": {
+      "name": "@jira-fhir-utils/fhir-jira-db",
+      "version": "1.0.0",
+      "bin": {
+        "download-issues": "./download-issues.js",
+        "extract-archives": "./extract-archives.js",
+        "load-initial": "./load-initial.js",
+        "load-updates": "./load-updates.js",
+        "create-fts": "./create-fts.js",
+        "create-tfidf": "./create-tfidf.js",
+      },
+      "dependencies": {
+        "@jira-fhir-utils/database-utils": "workspace:*",
+        "commander": "^14.0.0",
+        "fast-xml-parser": "^4.5.1",
+        "natural": "^8.1.0",
+        "stopword": "^3.1.5",
+      },
     },
     "packages/fhir-jira-mcp": {
       "name": "@jira-fhir-utils/fhir-jira-mcp",
@@ -40,26 +65,7 @@
       "version": "1.0.0",
       "dependencies": {
         "@jira-fhir-utils/database-utils": "workspace:*",
-        "@jira-fhir-utils/jira-xml-extractor": "workspace:*",
-      },
-    },
-    "packages/jira-xml-extractor": {
-      "name": "@jira-fhir-utils/jira-xml-extractor",
-      "version": "1.0.0",
-      "bin": {
-        "download-issues": "./download-issues.js",
-        "extract-archives": "./extract-archives.js",
-        "load-initial": "./load-initial.js",
-        "load-updates": "./load-updates.js",
-        "create-fts": "./create-fts.js",
-        "create-tfidf": "./create-tfidf.js",
-      },
-      "dependencies": {
-        "@jira-fhir-utils/database-utils": "workspace:*",
-        "commander": "^14.0.0",
-        "fast-xml-parser": "^4.5.1",
-        "natural": "^8.1.0",
-        "stopword": "^3.1.5",
+        "@jira-fhir-utils/fhir-jira-db": "workspace:*",
       },
     },
   },
@@ -72,11 +78,11 @@
 
     "@jira-fhir-utils/database-utils": ["@jira-fhir-utils/database-utils@workspace:packages/database-utils"],
 
+    "@jira-fhir-utils/fhir-jira-db": ["@jira-fhir-utils/fhir-jira-db@workspace:packages/fhir-jira-db"],
+
     "@jira-fhir-utils/fhir-jira-mcp": ["@jira-fhir-utils/fhir-jira-mcp@workspace:packages/fhir-jira-mcp"],
 
     "@jira-fhir-utils/jira-fhir-utils": ["@jira-fhir-utils/jira-fhir-utils@workspace:packages/jira-fhir-utils"],
-
-    "@jira-fhir-utils/jira-xml-extractor": ["@jira-fhir-utils/jira-xml-extractor@workspace:packages/jira-xml-extractor"],
 
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.16.0", "", { "dependencies": { "ajv": "^6.12.6", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.0.1", "express-rate-limit": "^7.5.0", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.23.8", "zod-to-json-schema": "^3.24.1" } }, "sha512-8ofX7gkZcLj9H9rSd50mCgm3SSF8C7XoclxJuLoV0Cz3rEQ1tv9MZRYYvJtm9n1BiEQQMzSmE/w2AEkNacLYfg=="],
 
@@ -559,6 +565,8 @@
     "zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
     "zod-to-json-schema": ["zod-to-json-schema@3.24.6", "", { "peerDependencies": { "zod": "^3.24.1" } }, "sha512-h/z3PKvcTcTetyjl1fkj79MHNEjm+HpD6NXheWjzOekY7kV+lwDYnHw+ivHkijnCSMz1yJaWBD9vu/Fcmk+vEg=="],
+
+    "@jira-fhir-utils/database-utils/commander": ["commander@12.1.0", "", {}, "sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA=="],
 
     "content-disposition/safe-buffer": ["safe-buffer@5.2.1", "", {}, "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ=="],
 

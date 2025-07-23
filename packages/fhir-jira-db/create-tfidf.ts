@@ -1,10 +1,82 @@
 import { Database } from "bun:sqlite";
-import { TFIDFProcessor } from "./tfidf-processor.js";
+import { TFIDFProcessor } from "./tfidf-processor.ts";
 import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
 
+// Type definitions
+interface Config {
+  batchSize: number;
+  topKeywords: number;
+  dbPath: string;
+  minDocFreq: number;
+  maxDocFreq: number;
+  minTermLength: number;
+  maxTermLength: number;
+  showHelp: boolean;
+}
+
+interface IssueData {
+  issue_key: string;
+  title: string | null;
+  description: string | null;
+  summary: string | null;
+  resolution_description: string | null;
+  related_url: string | null;
+  related_artifacts: string | null;
+  related_pages: string | null;
+  comments: string | null;
+}
+
+interface ProcessedDocument {
+  key: string;
+  title: string;
+  description: string;
+  summary: string;
+  resolution: string;
+  original_issue: IssueData;
+}
+
+interface KeywordData {
+  issue_key: string;
+  keyword: string;
+  tfidf_score: number;
+  tf_score: number;
+  idf_score: number;
+}
+
+interface CorpusStats {
+  keyword: string;
+  idf_score: number;
+  document_frequency: number;
+  total_documents: number;
+}
+
+interface TopKeyword {
+  keyword: string;
+  issue_count: number;
+  avg_tfidf: number;
+  max_tfidf: number;
+}
+
+interface IssueKeyword {
+  keyword: string;
+  tfidf_score: number;
+}
+
+interface SampleIssue {
+  issue_key: string;
+}
+
+interface CountResult {
+  count: number;
+}
+
+interface TableInfo {
+  name: string;
+}
+
 // Validate configuration parameters
-function validateConfig(config) {
-  const errors = [];
+function validateConfig(config: Config): string[] {
+  const errors: string[] = [];
   
   if (config.batchSize < 1 || config.batchSize > 10000) {
     errors.push("Batch size must be between 1 and 10000");
@@ -38,9 +110,9 @@ function validateConfig(config) {
 }
 
 // Parse command-line arguments
-function parseArguments() {
+function parseArguments(): Config {
   const args = process.argv.slice(2);
-  const config = {
+  const config: Config = {
     batchSize: 5000,
     topKeywords: 10,
     dbPath: '',
@@ -58,7 +130,7 @@ function parseArguments() {
       
       switch (arg) {
         case '--batch-size':
-          if (nextArg && !isNaN(nextArg)) {
+          if (nextArg && !isNaN(Number(nextArg))) {
             config.batchSize = parseInt(nextArg);
             i++;
           } else {
@@ -66,7 +138,7 @@ function parseArguments() {
           }
           break;
         case '--top-keywords':
-          if (nextArg && !isNaN(nextArg)) {
+          if (nextArg && !isNaN(Number(nextArg))) {
             config.topKeywords = parseInt(nextArg);
             i++;
           } else {
@@ -82,7 +154,7 @@ function parseArguments() {
           }
           break;
         case '--min-doc-freq':
-          if (nextArg && !isNaN(nextArg)) {
+          if (nextArg && !isNaN(Number(nextArg))) {
             config.minDocFreq = parseInt(nextArg);
             i++;
           } else {
@@ -90,7 +162,7 @@ function parseArguments() {
           }
           break;
         case '--max-doc-freq':
-          if (nextArg && !isNaN(nextArg)) {
+          if (nextArg && !isNaN(Number(nextArg))) {
             config.maxDocFreq = parseFloat(nextArg);
             i++;
           } else {
@@ -98,7 +170,7 @@ function parseArguments() {
           }
           break;
         case '--min-term-length':
-          if (nextArg && !isNaN(nextArg)) {
+          if (nextArg && !isNaN(Number(nextArg))) {
             config.minTermLength = parseInt(nextArg);
             i++;
           } else {
@@ -106,7 +178,7 @@ function parseArguments() {
           }
           break;
         case '--max-term-length':
-          if (nextArg && !isNaN(nextArg)) {
+          if (nextArg && !isNaN(Number(nextArg))) {
             config.maxTermLength = parseInt(nextArg);
             i++;
           } else {
@@ -132,7 +204,7 @@ function parseArguments() {
     }
     
   } catch (error) {
-    console.error("Error parsing arguments:", error.message);
+    console.error("Error parsing arguments:", (error as Error).message);
     console.error("Use --help to see available options");
     process.exit(1);
   }
@@ -141,11 +213,11 @@ function parseArguments() {
 }
 
 // Show help information
-function showHelp() {
+function showHelp(): void {
   console.log(`
 TF-IDF Analysis Tool for JIRA Issues
 
-Usage: node create-tfidf.js [options]
+Usage: bun create-tfidf.ts [options]
 
 Options:
   --batch-size <number>       Number of issues to process in each batch (default: 1000)
@@ -158,25 +230,26 @@ Options:
   --help, -h                 Show this help message
 
 Examples:
-  node create-tfidf.js
-  node create-tfidf.js --batch-size 500 --top-keywords 20
-  node create-tfidf.js --min-doc-freq 3 --max-doc-freq 0.5
+  bun create-tfidf.ts
+  bun create-tfidf.ts --batch-size 500 --top-keywords 20
+  bun create-tfidf.ts --min-doc-freq 3 --max-doc-freq 0.5
   `);
 }
 
 // Configuration (will be overridden by command-line arguments)
-let CONFIG = {
+let CONFIG: Config = {
   batchSize: 1000,
   topKeywords: 15,
   dbPath: "./jira_issues.sqlite",
   minDocFreq: 2,
   maxDocFreq: 0.7,
   minTermLength: 2,
-  maxTermLength: 30
+  maxTermLength: 30,
+  showHelp: false
 };
 
 // Create database tables for TF-IDF
-function createTFIDFTables(db) {
+function createTFIDFTables(db: Database): void {
   console.log("Creating TF-IDF tables...");
   
   // Drop existing tables if they exist
@@ -220,7 +293,7 @@ function createTFIDFTables(db) {
 }
 
 // Load issues from database
-function loadIssues(db, offset = 0, limit = BATCH_SIZE) {
+function loadIssues(db: Database, offset: number = 0, limit: number = CONFIG.batchSize): IssueData[] {
   const query = `
     SELECT 
       i.issue_key,
@@ -239,15 +312,15 @@ function loadIssues(db, offset = 0, limit = BATCH_SIZE) {
     LIMIT ? OFFSET ?
   `;
   
-  return db.prepare(query).all(limit, offset);
+  return db.prepare(query).all(limit, offset) as IssueData[];
 }
 
 // Extract related values from comma-separated fields
-function extractRelatedValues(issue) {
-  const values = new Set();
+function extractRelatedValues(issue: IssueData): string[] {
+  const values = new Set<string>();
   
   // Helper to parse and clean comma-separated values
-  const parseField = (field) => {
+  const parseField = (field: string | null): string[] => {
     if (!field || typeof field !== 'string') return [];
     return field
       .split(',')
@@ -264,10 +337,10 @@ function extractRelatedValues(issue) {
 }
 
 // Group issues by shared related values
-function groupIssuesByRelatedValues(issues) {
+function groupIssuesByRelatedValues(issues: IssueData[]): IssueData[][] {
   // Build a map of value -> issues that have that value
-  const valueToIssues = new Map();
-  const issueToValues = new Map();
+  const valueToIssues = new Map<string, Set<string>>();
+  const issueToValues = new Map<string, string[]>();
   
   // First pass: build the mappings
   issues.forEach(issue => {
@@ -276,23 +349,23 @@ function groupIssuesByRelatedValues(issues) {
     
     values.forEach(value => {
       if (!valueToIssues.has(value)) {
-        valueToIssues.set(value, new Set());
+        valueToIssues.set(value, new Set<string>());
       }
-      valueToIssues.get(value).add(issue.issue_key);
+      valueToIssues.get(value)!.add(issue.issue_key);
     });
   });
   
   // Second pass: build groups using iterative connected components to avoid stack overflow
-  const visited = new Set();
-  const groups = [];
+  const visited = new Set<string>();
+  const groups: string[][] = [];
   
   // Iterative DFS using a stack instead of recursion
-  const findConnectedComponent = (startIssueKey) => {
-    const currentGroup = new Set();
+  const findConnectedComponent = (startIssueKey: string): Set<string> => {
+    const currentGroup = new Set<string>();
     const stack = [startIssueKey];
     
     while (stack.length > 0) {
-      const issueKey = stack.pop();
+      const issueKey = stack.pop()!;
       
       if (visited.has(issueKey)) continue;
       
@@ -304,7 +377,7 @@ function groupIssuesByRelatedValues(issues) {
       
       // For each value, add all connected issues to the stack
       values.forEach(value => {
-        const connectedIssues = valueToIssues.get(value) || new Set();
+        const connectedIssues = valueToIssues.get(value) || new Set<string>();
         connectedIssues.forEach(connectedIssue => {
           if (!visited.has(connectedIssue)) {
             stack.push(connectedIssue);
@@ -327,30 +400,30 @@ function groupIssuesByRelatedValues(issues) {
   });
   
   // Create a map for quick lookup
-  const issueKeyToIssue = new Map();
+  const issueKeyToIssue = new Map<string, IssueData>();
   issues.forEach(issue => {
     issueKeyToIssue.set(issue.issue_key, issue);
   });
   
   // Convert groups of keys back to groups of issues
-  return groups.map(group => group.map(key => issueKeyToIssue.get(key)));
+  return groups.map(group => group.map(key => issueKeyToIssue.get(key)!));
 }
 
 // Validate database and required tables
-function validateDatabase(db) {
+function validateDatabase(db: Database): void {
   try {
     // Check if issues table exists
     const tableExists = db.prepare(`
       SELECT name FROM sqlite_master 
       WHERE type='table' AND name='issues_fts'
-    `).get();
+    `).get() as TableInfo | undefined;
     
     if (!tableExists) {
       throw new Error("Issues table not found in database");
     }
     
     // Check if issues table has expected columns
-    const columns = db.prepare("PRAGMA table_info(issues_fts)").all();
+    const columns = db.prepare("PRAGMA table_info(issues_fts)").all() as Array<{ name: string }>;
     const requiredColumns = ['issue_key', 'title', 'description', 'summary', 'resolution_description', 'related_url', 'related_artifacts', 'related_pages'];
     const existingColumns = columns.map(col => col.name);
     
@@ -362,22 +435,22 @@ function validateDatabase(db) {
     
     console.log("Database validation successful");
   } catch (error) {
-    throw new Error(`Database validation failed: ${error.message}`);
+    throw new Error(`Database validation failed: ${(error as Error).message}`);
   }
 }
 
 // Count total issues
-function countIssues(db) {
+function countIssues(db: Database): number {
   try {
-    const result = db.prepare("SELECT COUNT(*) as count FROM issues_fts").get();
+    const result = db.prepare("SELECT COUNT(*) as count FROM issues_fts").get() as CountResult;
     return result.count;
   } catch (error) {
-    throw new Error(`Error counting issues: ${error.message}`);
+    throw new Error(`Error counting issues: ${(error as Error).message}`);
   }
 }
 
 // Generator function to stream document batches grouped by related values
-function* streamDocumentBatches(db, batchSize = CONFIG.batchSize) {
+function* streamDocumentBatches(db: Database, batchSize: number = CONFIG.batchSize): Generator<ProcessedDocument[], void, unknown> {
   const totalIssues = countIssues(db);
   let processedCount = 0;
   let validDocuments = 0;
@@ -388,7 +461,7 @@ function* streamDocumentBatches(db, batchSize = CONFIG.batchSize) {
   
   // Load all issues at once for grouping (could be optimized for very large datasets)
   // For very large datasets, we could load in chunks and merge groups
-  const allIssues = [];
+  const allIssues: IssueData[] = [];
   let offset = 0;
   const loadChunkSize = 10000; // Load in chunks to avoid memory issues
   
@@ -411,14 +484,14 @@ function* streamDocumentBatches(db, batchSize = CONFIG.batchSize) {
   console.log(`Created ${groups.length} groups (sizes: ${groups.slice(0, 5).map(g => g.length).join(', ')}${groups.length > 5 ? '...' : ''})`);
   
   // Process groups
-  let currentBatch = [];
+  let currentBatch: IssueData[] = [];
   let groupsProcessed = 0;
   
   for (const group of groups) {
     // If adding this group would exceed batch size and we have items, yield current batch
     if (currentBatch.length > 0 && currentBatch.length + group.length > batchSize) {
       // Process and yield the current batch
-      const processedBatch = [];
+      const processedBatch: ProcessedDocument[] = [];
       currentBatch.forEach(issue => {
         const text = [
           issue.title || '',
@@ -457,7 +530,7 @@ function* streamDocumentBatches(db, batchSize = CONFIG.batchSize) {
       // Split large group into smaller batches
       for (let i = 0; i < group.length; i += batchSize) {
         const subGroup = group.slice(i, Math.min(i + batchSize, group.length));
-        const processedBatch = [];
+        const processedBatch: ProcessedDocument[] = [];
         
         subGroup.forEach(issue => {
           const text = [
@@ -499,7 +572,7 @@ function* streamDocumentBatches(db, batchSize = CONFIG.batchSize) {
   
   // Process any remaining items in the last batch
   if (currentBatch.length > 0) {
-    const processedBatch = [];
+    const processedBatch: ProcessedDocument[] = [];
     currentBatch.forEach(issue => {
       const text = [
         issue.title || '',
@@ -536,7 +609,7 @@ function* streamDocumentBatches(db, batchSize = CONFIG.batchSize) {
 }
 
 // Process TF-IDF for all issues using streaming
-async function processTFIDF(db, config = CONFIG) {
+async function processTFIDF(db: Database, config: Config = CONFIG): Promise<void> {
   const overallStartTime = Date.now();
   
   // Initialize processor with configuration
@@ -633,7 +706,7 @@ async function processTFIDF(db, config = CONFIG) {
 }
 
 // Show sample results
-function showSampleResults(db) {
+function showSampleResults(db: Database): void {
   console.log("\n=== Sample Results ===");
   
   // Top keywords across all issues
@@ -647,7 +720,7 @@ function showSampleResults(db) {
     GROUP BY keyword
     ORDER BY issue_count DESC
     LIMIT 20
-  `).all();
+  `).all() as TopKeyword[];
   
   console.log("\nTop 20 most common keywords:");
   topGlobalKeywords.forEach((kw, idx) => {
@@ -659,7 +732,7 @@ function showSampleResults(db) {
     SELECT issue_key FROM tfidf_keywords 
     GROUP BY issue_key 
     LIMIT 1
-  `).get();
+  `).get() as SampleIssue | undefined;
   
   if (sampleIssue) {
     const issueKeywords = db.prepare(`
@@ -668,7 +741,7 @@ function showSampleResults(db) {
       WHERE issue_key = ?
       ORDER BY tfidf_score DESC
       LIMIT 10
-    `).all(sampleIssue.issue_key);
+    `).all(sampleIssue.issue_key) as IssueKeyword[];
     
     console.log(`\nTop keywords for issue ${sampleIssue.issue_key}:`);
     issueKeywords.forEach((kw, idx) => {
@@ -678,10 +751,10 @@ function showSampleResults(db) {
 }
 
 // Main execution
-async function main() {
+async function main(): Promise<void> {
   console.log("Starting TF-IDF keyword extraction...");
   
-  let db;
+  let db: Database | undefined;
   
   try {
     // Parse command-line arguments
@@ -696,10 +769,11 @@ async function main() {
     // Update global config
     CONFIG = config;
     
-    if (config.dbPath == '') {
+    if (config.dbPath === '') {
       try {
-        config.dbPath = getDatabasePath();
+        config.dbPath = await getDatabasePath();
       } catch (error) {
+        const path = await import('path');
         config.dbPath = path.join(process.cwd(), 'jira_issues.sqlite').replace(/\\/g, '/');
       }
     }
@@ -709,8 +783,7 @@ async function main() {
     
     // Validate database file exists
     try {
-      const fs = await import('fs');
-      await fs.promises.access(config.dbPath);
+      await Bun.file(config.dbPath).arrayBuffer();
     } catch (error) {
       throw new Error(`Database file not found: ${config.dbPath}`);
     }
@@ -739,9 +812,9 @@ async function main() {
     console.log("\nTF-IDF analysis completed successfully!");
     
   } catch (error) {
-    console.error("Error during TF-IDF processing:", error.message);
+    console.error("Error during TF-IDF processing:", (error as Error).message);
     if (process.env.NODE_ENV === 'development') {
-      console.error("Stack trace:", error.stack);
+      console.error("Stack trace:", (error as Error).stack);
     }
     process.exit(1);
   } finally {
@@ -749,7 +822,7 @@ async function main() {
       try {
         db.close();
       } catch (error) {
-        console.error("Error closing database:", error.message);
+        console.error("Error closing database:", (error as Error).message);
       }
     }
   }

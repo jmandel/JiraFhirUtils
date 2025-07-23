@@ -1,41 +1,54 @@
-import { KeywordUtils } from "./keyword-utils.js";
+import { KeywordUtils } from "./keyword-utils.ts";
 import { Database } from "bun:sqlite";
-import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
+import { getDatabasePath, setupDatabaseCliArgs, type CommandOptions } from "@jira-fhir-utils/database-utils";
+
+// Type definitions for database query results
+interface TableInfo {
+  name: string;
+}
+
+interface KeywordCountResult {
+  count: number;
+}
+
+interface SampleIssueResult {
+  issue_key: string;
+}
 
 // Test the TF-IDF implementation
-async function testTFIDF() {
+async function testTFIDF(): Promise<void> {
   console.log("Testing TF-IDF implementation...\n");
   
   // Setup CLI arguments
-  const options = setupDatabaseCliArgs('test-tfidf', 'Test TF-IDF implementation and keyword utilities');
+  const options: CommandOptions = await setupDatabaseCliArgs('test-tfidf', 'Test TF-IDF implementation and keyword utilities');
   
-  const databasePath = getDatabasePath();
+  const databasePath: string = await getDatabasePath();
   console.log(`Using database: ${databasePath}`);
   
   const db = new Database(databasePath);
   
   try {
     // Check if TF-IDF tables exist
-    const tables = db.prepare(
+    const tables: TableInfo[] = db.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'tfidf%'"
-    ).all();
+    ).all() as TableInfo[];
     
     if (tables.length === 0) {
-      console.log("❌ TF-IDF tables not found. Please run 'npm run create-tfidf' first.");
+      console.log("❌ TF-IDF tables not found. Please run 'bun run create-tfidf' first.");
       return;
     }
     
     console.log("✅ Found TF-IDF tables:", tables.map(t => t.name).join(', '));
     
     // Check keyword count
-    const keywordCount = db.prepare(
+    const keywordCount: KeywordCountResult = db.prepare(
       "SELECT COUNT(DISTINCT keyword) as count FROM tfidf_keywords"
-    ).get();
+    ).get() as KeywordCountResult;
     
     console.log(`\n📊 Total unique keywords: ${keywordCount.count}`);
     
     // Test KeywordUtils
-    const utils = new KeywordUtils(databasePath);
+    const utils = await KeywordUtils.create(databasePath);
     
     // Get statistics
     console.log("\n📈 Keyword Statistics:");
@@ -51,9 +64,9 @@ async function testTFIDF() {
     });
     
     // Test with a sample issue
-    const sampleIssue = db.prepare(
+    const sampleIssue: SampleIssueResult | null = db.prepare(
       "SELECT issue_key FROM tfidf_keywords GROUP BY issue_key LIMIT 1"
-    ).get();
+    ).get() as SampleIssueResult | null;
     
     if (sampleIssue) {
       console.log(`\n🔍 Keywords for issue ${sampleIssue.issue_key}:`);

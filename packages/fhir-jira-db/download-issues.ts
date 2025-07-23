@@ -1,8 +1,36 @@
 import { program } from 'commander';
 import path from 'path';
-import fs from 'fs/promises';
 
-function setupCliArgs() {
+// Types
+interface WeekRange {
+  start: string;
+  end: string;
+}
+
+interface CliOptions {
+  specification?: string;
+  cookie: string;
+  outputDir: string;
+  limit?: number;
+}
+
+interface DownloadResult {
+  week: WeekRange;
+  filename: string;
+  error?: string;
+}
+
+interface DownloadResults {
+  successful: DownloadResult[];
+  failed: DownloadResult[];
+  totalProcessed: number;
+}
+
+interface FetchHeaders {
+  [key: string]: string;
+}
+
+function setupCliArgs(): CliOptions {
   program
     .name('build-download-script')
     .description('Download JIRA XML files by week starting from current week working backwards')
@@ -12,11 +40,11 @@ function setupCliArgs() {
     .option('--limit <number>', 'Maximum number of weeks to download (default: unlimited)', parseInt);
 
   program.parse();
-  return program.opts();
+  return program.opts() as CliOptions;
 }
 
-function generateWeekRanges(limit = null) {
-  const weeks = [];
+function generateWeekRanges(limit: number | null = null): WeekRange[] {
+  const weeks: WeekRange[] = [];
   const today = new Date();
   
   // Find the most recent Sunday (start of current week)
@@ -50,7 +78,7 @@ function generateWeekRanges(limit = null) {
   return weeks;
 }
 
-function generateJqlQuery(week, specification) {
+function generateJqlQuery(week: WeekRange, specification?: string): string {
   const baseQuery = `project = "FHIR Specification Feedback" and updatedDate < '${week.end}' and updatedDate >= '${week.start}' order by updated asc`;
   
   if (specification) {
@@ -60,13 +88,13 @@ function generateJqlQuery(week, specification) {
   }
 }
 
-function generateUrl(week, specification) {
+function generateUrl(week: WeekRange, specification?: string): string {
   const jqlQuery = generateJqlQuery(week, specification);
   const encodedJqlQuery = encodeURIComponent(jqlQuery);
   return `https://jira.hl7.org/sr/jira.issueviews:searchrequest-xml/temp/SearchRequest.xml?jqlQuery=${encodedJqlQuery}&tempMax=1000`;
 }
 
-function createFetchHeaders(cookie, jqlQuery) {
+function createFetchHeaders(cookie: string, jqlQuery: string): FetchHeaders {
   const refererUrl = `https://jira.hl7.org/issues/?jql=${encodeURIComponent(jqlQuery)}`;
   
   return {
@@ -87,7 +115,7 @@ function createFetchHeaders(cookie, jqlQuery) {
   };
 }
 
-async function fetchXmlContent(url, filename, headers, retries = 1) {
+async function fetchXmlContent(url: string, filename: string, headers: FetchHeaders, retries: number = 1): Promise<string | null> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       console.log(`  Fetching ${filename} (attempt ${attempt}/${retries})`);
@@ -104,7 +132,8 @@ async function fetchXmlContent(url, filename, headers, retries = 1) {
       console.log(`  ✓ Fetched ${filename} (${xmlText.length} chars)`);
       return xmlText;
     } catch (error) {
-      console.warn(`  ✗ Attempt ${attempt} failed for ${filename}:`, error.message);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn(`  ✗ Attempt ${attempt} failed for ${filename}:`, errorMessage);
       if (attempt === retries) {
         console.error(`  ✗ Failed to fetch ${filename} after ${retries} attempts`);
         return null;
@@ -113,29 +142,36 @@ async function fetchXmlContent(url, filename, headers, retries = 1) {
       await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
     }
   }
+  return null;
 }
 
-async function ensureDirectoryExists(dirPath) {
+async function ensureDirectoryExists(dirPath: string): Promise<void> {
   try {
-    await fs.access(dirPath);
+    const file = Bun.file(dirPath);
+    const exists = await file.exists();
+    if (!exists) {
+      console.log(`Creating directory: ${dirPath}`);
+      await Bun.$`mkdir -p ${dirPath}`;
+    }
   } catch (error) {
     console.log(`Creating directory: ${dirPath}`);
-    await fs.mkdir(dirPath, { recursive: true });
+    await Bun.$`mkdir -p ${dirPath}`;
   }
 }
 
-async function saveXmlFile(xmlContent, filename, outputDir) {
+async function saveXmlFile(xmlContent: string, filename: string, outputDir: string): Promise<void> {
   const filePath = path.join(outputDir, filename);
-  await fs.writeFile(filePath, xmlContent, 'utf8');
+  const file = Bun.file(filePath);
+  await Bun.write(file, xmlContent);
   console.log(`  ✓ Saved ${filename}`);
 }
 
-async function downloadWeeklyXmlFiles(weeks, options) {
+async function downloadWeeklyXmlFiles(weeks: WeekRange[], options: CliOptions): Promise<DownloadResults> {
   const { cookie, outputDir, specification } = options;
   
   await ensureDirectoryExists(outputDir);
   
-  const results = {
+  const results: DownloadResults = {
     successful: [],
     failed: [],
     totalProcessed: 0
@@ -159,8 +195,9 @@ async function downloadWeeklyXmlFiles(weeks, options) {
         await saveXmlFile(xmlContent, filename, outputDir);
         results.successful.push({ week, filename });
       } catch (saveError) {
-        console.error(`  ✗ Failed to save ${filename}:`, saveError.message);
-        results.failed.push({ week, filename, error: saveError.message });
+        const errorMessage = saveError instanceof Error ? saveError.message : String(saveError);
+        console.error(`  ✗ Failed to save ${filename}:`, errorMessage);
+        results.failed.push({ week, filename, error: errorMessage });
       }
     } else {
       results.failed.push({ week, filename, error: 'Failed to fetch' });
@@ -177,7 +214,7 @@ async function downloadWeeklyXmlFiles(weeks, options) {
   return results;
 }
 
-async function main() {
+async function main(): Promise<void> {
   const options = setupCliArgs();
   
   console.log('Starting JIRA XML download...');
@@ -233,18 +270,21 @@ async function main() {
       });
     }
     
-    await fs.writeFile(manifestPath, manifest, 'utf8');
+    const manifestFile = Bun.file(manifestPath);
+    await Bun.write(manifestFile, manifest);
     console.log(`\n✓ Download manifest saved to: ${manifestPath}`);
     
     console.log('\nDownload completed!');
     
   } catch (error) {
-    console.error('Fatal error during download:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Fatal error during download:', errorMessage);
     process.exit(1);
   }
 }
 
 main().catch(error => {
-  console.error('Error:', error);
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  console.error('Error:', errorMessage);
   process.exit(1);
 });

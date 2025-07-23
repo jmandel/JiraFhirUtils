@@ -1,5 +1,4 @@
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { program } from 'commander';
 
@@ -7,23 +6,39 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename).replace(/\\/g, '/');
 
 // Database search paths (same as MCP server)
-const DB_PATHS = [
+const DB_PATHS: string[] = [
   path.join(process.cwd(), 'jira_issues.sqlite').replace(/\\/g, '/'),
   path.join(process.cwd(), '..', 'jira_issues.sqlite').replace(/\\/g, '/'),
   path.join(__dirname, 'jira_issues.sqlite').replace(/\\/g, '/'),
   path.join(__dirname, '..', 'jira_issues.sqlite').replace(/\\/g, '/'),
 ];
 
+// Interface for command-line options
+interface CommandOptions {
+  dbPath?: string;
+  dbCheck?: boolean;
+  [key: string]: any;
+}
+
+// Interface for additional CLI option configuration
+interface CliOptionConfig {
+  description: string;
+  defaultValue?: any;
+}
+
+interface AdditionalOptions {
+  [flag: string]: CliOptionConfig;
+}
+
 /**
  * Find database path by searching through predefined locations
- * @returns {string} Path to database file
- * @throws {Error} If database file not found in any location
+ * @returns Path to database file or null if not found
  */
-export function findDatabasePath() {
+export async function findDatabasePath(): Promise<string | null> {
   for (const dbPath of DB_PATHS) {
     try {
       //console.warn(`Checking for database at: ${dbPath}`);
-      if (fs.existsSync(dbPath)) {
+      if (await Bun.file(dbPath).exists()) {
         return dbPath;
       }
     } catch (error) {
@@ -36,28 +51,31 @@ export function findDatabasePath() {
 
 /**
  * Get database path from command-line argument or fallback to search
- * @param {string} [explicitPath] - Optional explicit database path
- * @returns {string} Path to database file
+ * @param explicitPath - Optional explicit database path
+ * @returns Path to database file
+ * @throws Error if database file not found
  */
-export function getDatabasePath(explicitPath = null) {
+export async function getDatabasePath(explicitPath: string | null = null): Promise<string> {
   // Use explicit path if provided
   if (explicitPath) {
-    if (!fs.existsSync(explicitPath.replace(/\\/g, '/'))) {
+    const normalizedPath = explicitPath.replace(/\\/g, '/');
+    if (!(await Bun.file(normalizedPath).exists())) {
       throw new Error(`Database file not found at specified path: ${explicitPath}`);
     }
-    return explicitPath.replace(/\\/g, '/');
+    return normalizedPath;
   }
 
   // Check if command-line argument was provided
-  const opts = program.opts();
+  const opts = program.opts() as CommandOptions;
   if (opts.dbPath) {
-    if (!fs.existsSync(opts.dbPath.replace(/\\/g, '/'))) {
+    const normalizedPath = opts.dbPath.replace(/\\/g, '/');
+    if (!(await Bun.file(normalizedPath).exists())) {
       throw new Error(`Database file not found at specified path: ${opts.dbPath}`);
     }
-    return opts.dbPath.replace(/\\/g, '/');
+    return normalizedPath;
   }
 
-  const foundPath = findDatabasePath();
+  const foundPath = await findDatabasePath();
   if (foundPath) {
     return foundPath;
   }
@@ -68,12 +86,16 @@ export function getDatabasePath(explicitPath = null) {
 
 /**
  * Setup command-line argument parsing for database path
- * @param {string} name - Program name
- * @param {string} description - Program description
- * @param {Object} additionalOptions - Additional command-line options
- * @returns {Object} Parsed command-line options
+ * @param name - Program name
+ * @param description - Program description
+ * @param additionalOptions - Additional command-line options
+ * @returns Parsed command-line options
  */
-export function setupDatabaseCliArgs(name, description, additionalOptions = {}) {
+export async function setupDatabaseCliArgs(
+  name: string, 
+  description: string, 
+  additionalOptions: AdditionalOptions = {}
+): Promise<CommandOptions> {
   program
     .name(name)
     .description(description)
@@ -86,16 +108,17 @@ export function setupDatabaseCliArgs(name, description, additionalOptions = {}) 
   });
 
   program.parse();
-  const opts = program.opts();
+  const opts = program.opts() as CommandOptions;
 
   // Handle database check mode
   if (opts.dbCheck) {
     try {
-      const dbPath = getDatabasePath();
+      const dbPath = await getDatabasePath();
       console.log(`✓ Database found at: ${dbPath}`);
       process.exit(0);
     } catch (error) {
-      console.error(`✗ Database not found: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`✗ Database not found: ${errorMessage}`);
       process.exit(1);
     }
   }
@@ -105,8 +128,8 @@ export function setupDatabaseCliArgs(name, description, additionalOptions = {}) 
 
 /**
  * Get database search paths array
- * @returns {string[]} Array of database search paths
+ * @returns Array of database search paths
  */
-export function getDbPaths() {
+export function getDbPaths(): string[] {
   return [...DB_PATHS];
 }

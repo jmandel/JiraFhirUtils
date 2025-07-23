@@ -1,10 +1,42 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { Database } from "bun:sqlite";
-import { existsSync } from "fs";
 import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
 
-function setupFTS5Tables(db) {
+interface IssuesFTSRow {
+    issue_key: string;
+    issue_int: number;
+    title: string;
+    description: string;
+    summary: string;
+    resolution: string;
+    resolution_description: string;
+    project_key: string;
+    type: string;
+    priority: string;
+    status: string;
+    assignee: string;
+    reporter: string;
+    work_group: string;
+    change_category: string;
+    change_impact: string;
+    related_url: string;
+    related_artifacts: string;
+    related_pages: string;
+}
+
+interface CommentsFTSRow {
+    comment_id: string;
+    issue_key: string;
+    author: string;
+    body: string;
+}
+
+interface CountResult {
+    count: number;
+}
+
+function setupFTS5Tables(db: Database): void {
     console.log("Dropping and creating FTS5 tables...");
     
     db.exec(`DROP table IF EXISTS issues_fts`);
@@ -49,7 +81,7 @@ function setupFTS5Tables(db) {
     console.log("FTS5 tables created successfully");
 }
 
-function populateIssuesFTS(db) {
+function populateIssuesFTS(db: Database): void {
     console.log("Populating issues_fts table...");
     
     const startTime = Date.now();
@@ -118,7 +150,8 @@ function populateIssuesFTS(db) {
         
         db.exec("COMMIT");
         
-        const count = db.prepare("SELECT COUNT(*) as count FROM issues_fts").get().count;
+        const result = db.prepare("SELECT COUNT(*) as count FROM issues_fts").get() as CountResult;
+        const count = result.count;
         const elapsed = Date.now() - startTime;
         console.log(`✓ Populated issues_fts with ${count} entries in ${elapsed}ms`);
     } catch (error) {
@@ -127,7 +160,7 @@ function populateIssuesFTS(db) {
     }
 }
 
-function populateCommentsFTS(db) {
+function populateCommentsFTS(db: Database): void {
     console.log("Populating comments_fts table...");
     
     const startTime = Date.now();
@@ -152,7 +185,8 @@ function populateCommentsFTS(db) {
         
         db.exec("COMMIT");
         
-        const count = db.prepare("SELECT COUNT(*) as count FROM comments_fts").get().count;
+        const result = db.prepare("SELECT COUNT(*) as count FROM comments_fts").get() as CountResult;
+        const count = result.count;
         const elapsed = Date.now() - startTime;
         console.log(`✓ Populated comments_fts with ${count} entries in ${elapsed}ms`);
     } catch (error) {
@@ -161,16 +195,16 @@ function populateCommentsFTS(db) {
     }
 }
 
-async function main() {
+async function main(): Promise<void> {
     console.log("Creating FTS5 tables for JIRA issues...\n");
     
     // Setup CLI arguments
-    const options = setupDatabaseCliArgs('create-fts', 'Create FTS5 search tables for JIRA issues');
+    const options = await setupDatabaseCliArgs('create-fts', 'Create FTS5 search tables for JIRA issues');
     
-    const databasePath = getDatabasePath();
+    const databasePath = await getDatabasePath();
     console.log(`Using database: ${databasePath}`);
     
-    if (!existsSync(databasePath)) {
+    if (!(await Bun.file(databasePath).exists())) {
         console.error(`Error: Database file '${databasePath}' not found.`);
         console.error("Please run load-initial.js first to create the database.");
         process.exit(1);

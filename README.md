@@ -15,49 +15,49 @@ This project uses a monorepo structure with workspaces:
 ## Database Processing (`packages/fhir-jira-db`)
 
 This package contains utilities to create a SQLite database based on Jira tickets and compressed files with FHIR Core ticket XML exports:
-* `extract-archives.js` extracts the included tar.gz archives into their respective directories for processing
-* `load-initial.js` loads the contents of the `bulk` directory, creates a database, and assumes no duplicates/conflicts
-* `load-updates.js` loads the contents of the `updates` directory into the database, updating existing records if they exist or adding new records if they do not
-* `create-fts.js` creates SQLite FTS5 full-text search tables for `issues` and `comments` from the database
-* `create-tfidf.js` extracts TF-IDF data from Jira issues
-* `download-issues.js` downloads issues directly from Jira using the REST API
+* `extract-archives.ts` extracts the included tar.gz archives into their respective directories for processing
+* `load-initial.ts` loads the contents of the `bulk` directory, creates a database, and assumes no duplicates/conflicts
+* `load-updates.ts` loads the contents of the `updates` directory into the database, updating existing records if they exist or adding new records if they do not
+* `create-fts.ts` creates SQLite FTS5 full-text search tables for `issues` and `comments` from the database
+* `create-tfidf.ts` extracts TF-IDF data from Jira issues
+* `download-issues.ts` downloads issues directly from Jira using the REST API
 * `bulk.tar.gz` contains FHIR Core tickets FHIR-2839 through FHIR-51487, as of 2025.07.15
 * `updates.tar.gz` contains FHIR Core tickets that have changes on 2025.07.15
 
-- **extract-archives.js**
+- **extract-archives.ts**
   Use this script to extract the tar.gz archives before processing. It will extract `bulk.tar.gz` to the `bulk` directory and `updates.tar.gz` to the `updates` directory. Any existing directories will be replaced.
   **Run with:**
   ```sh
   bun run extract-archives
   # or
-  bun packages/fhir-jira-db/extract-archives.js
+  bun packages/fhir-jira-db/extract-archives.ts
   ```
 
-- **load-initial.js**
+- **load-initial.ts**
   Use this script to create a new database from scratch using the XML files in the `bulk` directory. It assumes there are no duplicate or conflicting issues.
   **Run with:**
   ```sh
   bun run load-initial
   # or
-  bun packages/fhir-jira-db/load-initial.js
+  bun packages/fhir-jira-db/load-initial.ts
   ```
 
-- **load-updates.js**
+- **load-updates.ts**
   Use this script to apply updates to an existing database using XML files in the `updates` directory. It will insert new issues, update existing ones, and add new comments or custom fields as needed, without affecting unrelated records.
   **Run with:**
   ```sh
   bun run load-updates
   # or
-  bun packages/fhir-jira-db/load-updates.js
+  bun packages/fhir-jira-db/load-updates.ts
   ```
 
-- **create-fts.js**
+- **create-fts.ts**
   After loading or updating the database, run this script to (re)create the FTS5 (Full-Text Search) tables for issues and comments, and populate them with the latest data. This enables fast, flexible text searching across issues and comments.
   **Run with:**
   ```sh
   bun run create-fts
   # or
-  bun packages/fhir-jira-db/create-fts.js
+  bun packages/fhir-jira-db/create-fts.ts
   ```
   The script will drop and recreate the FTS5 tables, then fill them with the current contents of the database.
   Example queries you can run after setup:
@@ -66,13 +66,13 @@ This package contains utilities to create a SQLite database based on Jira ticket
   - Phrase search: `SELECT * FROM issues_fts WHERE issues_fts MATCH '"exact phrase"'`
   - Field-specific: `SELECT * FROM issues_fts WHERE title MATCH 'search term'`
 
-- **create-tfidf.js**
+- **create-tfidf.ts**
   This script implements TF-IDF (Term Frequency-Inverse Document Frequency) keyword extraction from JIRA issues. It analyzes text content from issue titles, descriptions, summaries, and custom fields to identify the most relevant keywords for each issue. The implementation includes FHIR-specific processing to preserve domain terminology.
   **Run with:**
   ```sh
   bun run create-tfidf
   # or
-  bun packages/fhir-jira-db/create-tfidf.js
+  bun packages/fhir-jira-db/create-tfidf.ts
   ```
   The script will:
   - Create new database tables (`tfidf_keywords` and `tfidf_corpus_stats`)
@@ -117,20 +117,20 @@ All scripts support these common options:
 
 ```sh
 # Use explicit database path
-bun packages/fhir-jira-db/load-initial.js --db-path /path/to/custom/database.sqlite
+bun packages/fhir-jira-db/load-initial.ts --db-path /path/to/custom/database.sqlite
 
 # Check if database exists without running the script
-bun packages/fhir-jira-db/load-initial.js --db-check
+bun packages/fhir-jira-db/load-initial.ts --db-check
 
 # Show help
-bun packages/fhir-jira-db/load-initial.js --help
+bun packages/fhir-jira-db/load-initial.ts --help
 ```
 
 ### Script-Specific Options
 
-- **load-initial.js**: `--initial-dir <dir>` - Custom initial XML directory (default: `bulk`)
-- **load-updates.js**: `--update-dir <dir>` - Custom update XML directory (default: `updates`)
-- **create-tfidf.js**: 
+- **load-initial.ts**: `--initial-dir <dir>` - Custom initial XML directory (default: `bulk`)
+- **load-updates.ts**: `--update-dir <dir>` - Custom update XML directory (default: `updates`)
+- **create-tfidf.ts**: 
   - `--batch-size <size>` - Processing batch size (default: 1000)
   - `--top-keywords <count>` - Keywords per issue (default: 15)
 
@@ -138,13 +138,13 @@ bun packages/fhir-jira-db/load-initial.js --help
 
 ```sh
 # Load initial data from custom directory with custom database
-bun packages/fhir-jira-db/load-initial.js --db-path ./custom.sqlite --initial-dir ./my-bulk-data
+bun packages/fhir-jira-db/load-initial.ts --db-path ./custom.sqlite --initial-dir ./my-bulk-data
 
 # Create TF-IDF with custom settings
-bun packages/fhir-jira-db/create-tfidf.js --db-path ./prod.sqlite --batch-size 500 --top-keywords 20
+bun packages/fhir-jira-db/create-tfidf.ts --db-path ./prod.sqlite --batch-size 500 --top-keywords 20
 
 # Check if database exists before processing
-bun packages/fhir-jira-db/create-fts.js --db-check
+bun packages/fhir-jira-db/create-fts.ts --db-check
 ```
 
 ## MCP Server (`packages/fhir-jira-mcp`)
@@ -169,13 +169,13 @@ The MCP server now uses the same unified database path resolution system as the 
 
 ```sh
 # Use explicit database path
-bun packages/fhir-jira-mcp/index.js --db-path /path/to/custom/database.sqlite
+bun packages/fhir-jira-mcp/index.ts --db-path /path/to/custom/database.sqlite
 
 # Start HTTP server on custom port with custom database
-bun packages/fhir-jira-mcp/index.js --db-path ./prod.sqlite --port 8080
+bun packages/fhir-jira-mcp/index.ts --db-path ./prod.sqlite --port 8080
 
 # Check database connectivity
-bun packages/fhir-jira-mcp/index.js --db-check
+bun packages/fhir-jira-mcp/index.ts --db-check
 ```
 
 The server operates in read-only mode for database safety and will automatically discover the database file using the same fallback locations as the database scripts. See the [fhir-jira-mcp README](packages/fhir-jira-mcp/README.md) for detailed configuration and usage instructions, including Claude Desktop integration and HTTP API documentation.
@@ -185,13 +185,13 @@ The server operates in read-only mode for database safety and will automatically
 To use the MCP server with Claude Code, add it using the `claude mcp add` command:
 
 ```sh
-claude mcp add FhirJira "bun" "packages/fhir-jira-mcp/index.js"
+claude mcp add FhirJira "bun" "packages/fhir-jira-mcp/index.ts"
 ```
 
 This configures Claude Code to run the MCP server in stdio mode using Bun. The server will automatically discover your database file or you can specify a custom path by modifying the command to include `--db-path`:
 
 ```sh
-claude mcp add FhirJira "bun" "packages/fhir-jira-mcp/index.js" "--db-path" "/path/to/custom/database.sqlite"
+claude mcp add FhirJira "bun" "packages/fhir-jira-mcp/index.ts" "--db-path" "/path/to/custom/database.sqlite"
 ```
 
 ## Quick Start

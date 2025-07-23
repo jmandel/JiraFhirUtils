@@ -1,15 +1,84 @@
 import natural from 'natural';
 import { removeStopwords } from 'stopword';
 
+// Type definitions for TF-IDF processing
+export interface TFIDFOptions {
+  minDocumentFrequency?: number;
+  maxDocumentFrequency?: number;
+  minTermLength?: number;
+  maxTermLength?: number;
+}
+
+export interface DocumentData {
+  original: string;
+  tokens: string[];
+  metadata: Record<string, any>;
+}
+
+export interface TFIDFScore {
+  term: string;
+  tfidf: number;
+  tf: number;
+}
+
+export interface CorpusStatistic {
+  documentFrequency: number;
+  idf: number;
+  totalDocuments: number;
+}
+
+export interface SimilarDocument {
+  documentId: string;
+  similarity: number;
+}
+
+export interface KeywordExport {
+  issue_key: string;
+  keyword: string;
+  tfidf_score: number;
+  tf_score: number;
+  idf_score: number;
+}
+
+export interface CorpusStatsExport {
+  keyword: string;
+  idf_score: number;
+  document_frequency: number;
+  total_documents: number;
+}
+
+export interface ProcessableDocument {
+  key?: string;
+  id?: string;
+  title?: string;
+  description?: string;
+  summary?: string;
+  resolution?: string;
+  custom_fields?: Array<{ field_value?: string }>;
+  [key: string]: any;
+}
+
 export class TFIDFProcessor {
-  constructor(options = {}) {
+  private tokenizer: natural.WordTokenizer;
+  private tfidf: natural.TfIdf;
+  private documents: Map<string, DocumentData>;
+  private corpusStats: Map<string, CorpusStatistic>;
+  private stemmer: typeof natural.PorterStemmer;
+  
+  // Configuration options
+  private minDocumentFrequency: number;
+  private maxDocumentFrequency: number;
+  private minTermLength: number;
+  private maxTermLength: number;
+
+  constructor(options: TFIDFOptions = {}) {
     this.tokenizer = new natural.WordTokenizer();
     this.tfidf = new natural.TfIdf();
-    this.documents = new Map();
-    this.corpusStats = new Map();
+    this.documents = new Map<string, DocumentData>();
+    this.corpusStats = new Map<string, CorpusStatistic>();
     this.stemmer = natural.PorterStemmer;
     
-    // Configuration options
+    // Configuration options with defaults
     this.minDocumentFrequency = options.minDocumentFrequency || 2; // Term must appear in at least 2 documents
     this.maxDocumentFrequency = options.maxDocumentFrequency || 0.5; // Term must appear in at most 50% of documents
     this.minTermLength = options.minTermLength || 2;
@@ -19,14 +88,14 @@ export class TFIDFProcessor {
   /**
    * Preprocess text by tokenizing, lowercasing, and removing stopwords
    */
-  preprocessText(text) {
+  preprocessText(text: string): string[] {
     if (!text) return [];
     
     // Clean text before tokenization
     const cleanedText = this.cleanText(text);
     
     // Tokenize
-    let tokens = this.tokenizer.tokenize(cleanedText.toLowerCase());
+    let tokens = this.tokenizer.tokenize(cleanedText.toLowerCase()) || [];
     
     // Remove stopwords
     tokens = removeStopwords(tokens);
@@ -46,7 +115,7 @@ export class TFIDFProcessor {
   /**
    * Clean text by removing HTML entities, special characters, and normalizing whitespace
    */
-  cleanText(text) {
+  private cleanText(text: string): string {
     try {
       if (!text || typeof text !== 'string') {
         return '';
@@ -68,7 +137,7 @@ export class TFIDFProcessor {
         .replace(/[^\w\s\-_.]/g, ' ')
         .trim();
     } catch (error) {
-      console.warn(`Error cleaning text: ${error.message}`);
+      console.warn(`Error cleaning text: ${(error as Error).message}`);
       return '';
     }
   }
@@ -76,7 +145,7 @@ export class TFIDFProcessor {
   /**
    * Check if a token is valid for inclusion in the corpus
    */
-  isValidToken(token) {
+  private isValidToken(token: string): boolean {
     // Check length constraints
     if (token.length < this.minTermLength || token.length > this.maxTermLength) return false;
     
@@ -98,7 +167,7 @@ export class TFIDFProcessor {
   /**
    * Process FHIR-specific terms
    */
-  processFHIRTerms(tokens) {
+  private processFHIRTerms(tokens: string[]): string[] {
     return tokens.map(token => {
       // Preserve FHIR resource names (expanded list)
       if (token.match(/^(patient|observation|procedure|condition|medication|encounter|practitioner|organization|device|diagnostic|immunization|allergyintolerance|careplan|careteam|goal|location|endpoint|healthcareservice|schedule|slot|appointment|bundle|composition|documentreference|binary|media|list|library|measure|questionnaire|questionnaireresponse|subscription|communication|communicationrequest|claim|claimresponse|coverage|eligibilityrequest|eligibilityresponse|enrollmentrequest|enrollmentresponse|explanationofbenefit|paymentnotice|paymentreconciliation|valueSet|codesystem|conceptmap|structuredefinition|implementationguide|searchparameter|operationdefinition|conformance|capabilitystatement|structuremap|graphdefinition|messagedefinition|eventdefinition|activitydefinition|plandefinition|task|provenance|auditEvent|consent|contract|person|relatedperson|group|bodystructure|substance|substancespecification|substanceprotein|substancereferenceinformation|substancesourcematerial|medicationknowledge|medicationrequest|medicationadministration|medicationdispense|medicationstatement|detectedissue|adverseevent|researchstudy|researchsubject|riskassessment|clinicalimpression|flag|familymemberhistory|molecularsequence|imagingstudy|diagnosticreport|specimen|bodysite|imagingmanifest|imagingobjectselection|imagingexcerpt|medicinalproduct|medicinalproductauthorization|medicinalproductcontraindication|medicinalproductindication|medicinalproductingredient|medicinalproductinteraction|medicinalproductmanufactured|medicinalproductpackaged|medicinalproductpharmaceutical|medicinalproductundesirableeffect|devicedefinition|devicemetric|devicecomponent|deviceuserequest|deviceusestatement|devicerequest|supplyrequest|supplydelivery|inventoryreport|linkage|requestgroup|nutritionorder|visionprescription|invoice|account|chargeitem|chargeitemdefinition|contract|person|relatedperson|group)$/i)) {
@@ -127,7 +196,7 @@ export class TFIDFProcessor {
   /**
    * Apply stemming to tokens, preserving certain technical terms
    */
-  applyStemming(tokens) {
+  private applyStemming(tokens: string[]): string[] {
     return tokens.map(token => {
       // Don't stem FHIR resource names or version identifiers (already uppercase)
       if (token === token.toUpperCase() && token.length > 1) {
@@ -152,7 +221,7 @@ export class TFIDFProcessor {
   /**
    * Add a document to the corpus
    */
-  addDocument(id, text, metadata = {}) {
+  addDocument(id: string, text: string, metadata: Record<string, any> = {}): void {
     try {
       if (!id || typeof id !== 'string') {
         throw new Error('Document ID must be a non-empty string');
@@ -181,7 +250,7 @@ export class TFIDFProcessor {
       
       this.tfidf.addDocument(tokenString, id);
     } catch (error) {
-      console.error(`Error adding document '${id}': ${error.message}`);
+      console.error(`Error adding document '${id}': ${(error as Error).message}`);
       // Continue processing other documents
     }
   }
@@ -189,10 +258,10 @@ export class TFIDFProcessor {
   /**
    * Build corpus from array of documents
    */
-  buildCorpus(documents) {
+  buildCorpus(documents: ProcessableDocument[]): void {
     documents.forEach(doc => {
       const text = this.combineTextFields(doc);
-      this.addDocument(doc.key || doc.id, text, doc);
+      this.addDocument(doc.key || doc.id || '', text, doc);
     });
     
     this.calculateCorpusStats();
@@ -201,14 +270,14 @@ export class TFIDFProcessor {
   /**
    * Build corpus from documents in streaming fashion to handle large datasets
    */
-  buildCorpusStreaming(documentBatches, batchSize = 1000) {
+  buildCorpusStreaming(documentBatches: Iterable<ProcessableDocument[]>, batchSize: number = 1000): void {
     let totalProcessed = 0;
     
     for (const batch of documentBatches) {
       // Process batch
       batch.forEach(doc => {
         const text = this.combineTextFields(doc);
-        this.addDocument(doc.key || doc.id, text, doc);
+        this.addDocument(doc.key || doc.id || '', text, doc);
       });
       
       totalProcessed += batch.length;
@@ -227,7 +296,7 @@ export class TFIDFProcessor {
   /**
    * Perform memory cleanup by removing unused references
    */
-  performMemoryCleanup() {
+  private performMemoryCleanup(): void {
     // Force garbage collection hint
     if (global.gc) {
       global.gc();
@@ -237,8 +306,8 @@ export class TFIDFProcessor {
   /**
    * Combine multiple text fields from an issue
    */
-  combineTextFields(issue) {
-    const fields = [];
+  private combineTextFields(issue: ProcessableDocument): string {
+    const fields: string[] = [];
     
     if (issue.title) fields.push(issue.title);
     if (issue.description) fields.push(issue.description);
@@ -260,8 +329,8 @@ export class TFIDFProcessor {
   /**
    * Calculate TF-IDF scores for a specific document
    */
-  calculateTFIDF(documentId) {
-    const scores = [];
+  calculateTFIDF(documentId: string): TFIDFScore[] {
+    const scores: TFIDFScore[] = [];
     
     // Ensure documentId is valid
     if (!documentId) {
@@ -311,7 +380,7 @@ export class TFIDFProcessor {
   /**
    * Extract top N keywords for a document
    */
-  extractKeywords(documentId, topN = 10) {
+  extractKeywords(documentId: string, topN: number = 10): TFIDFScore[] {
     const scores = this.calculateTFIDF(documentId);
     return scores.slice(0, topN);
   }
@@ -319,8 +388,8 @@ export class TFIDFProcessor {
   /**
    * Calculate corpus-wide statistics
    */
-  calculateCorpusStats() {
-    const termDocFrequency = new Map();
+  private calculateCorpusStats(): void {
+    const termDocFrequency = new Map<string, number>();
     const totalDocs = this.documents.size;
     
     // Count document frequency for each term
@@ -356,8 +425,8 @@ export class TFIDFProcessor {
   /**
    * Get all keywords for all documents
    */
-  extractAllKeywords(topN = 10) {
-    const allKeywords = new Map();
+  extractAllKeywords(topN: number = 10): Map<string, TFIDFScore[]> {
+    const allKeywords = new Map<string, TFIDFScore[]>();
     
     this.documents.forEach((doc, docId) => {
       const keywords = this.extractKeywords(docId, topN);
@@ -370,8 +439,8 @@ export class TFIDFProcessor {
   /**
    * Find similar documents based on TF-IDF vectors
    */
-  findSimilarDocuments(documentId, topN = 5) {
-    const similarities = [];
+  findSimilarDocuments(documentId: string, topN: number = 5): SimilarDocument[] {
+    const similarities: SimilarDocument[] = [];
     const baseVector = this.getDocumentVector(documentId);
     
     this.documents.forEach((doc, docId) => {
@@ -392,8 +461,8 @@ export class TFIDFProcessor {
   /**
    * Get TF-IDF vector for a document
    */
-  getDocumentVector(documentId) {
-    const vector = new Map();
+  private getDocumentVector(documentId: string): Map<string, number> {
+    const vector = new Map<string, number>();
     const scores = this.calculateTFIDF(documentId);
     
     scores.forEach(score => {
@@ -406,7 +475,7 @@ export class TFIDFProcessor {
   /**
    * Calculate cosine similarity between two vectors
    */
-  cosineSimilarity(vector1, vector2) {
+  private cosineSimilarity(vector1: Map<string, number>, vector2: Map<string, number>): number {
     let dotProduct = 0;
     let magnitude1 = 0;
     let magnitude2 = 0;
@@ -436,20 +505,20 @@ export class TFIDFProcessor {
   /**
    * Get corpus statistics
    */
-  getCorpusStats() {
+  getCorpusStats(): Map<string, CorpusStatistic> {
     return this.corpusStats;
   }
 
   /**
    * Export keywords data for database storage
    */
-  exportKeywordsForDB(topN = 10) {
-    const results = [];
+  exportKeywordsForDB(topN: number = 10): KeywordExport[] {
+    const results: KeywordExport[] = [];
     
     this.documents.forEach((doc, docId) => {
       const keywords = this.extractKeywords(docId, topN);
       keywords.forEach(keyword => {
-        const corpusStat = this.corpusStats.get(keyword.term) || {};
+        const corpusStat = this.corpusStats.get(keyword.term) || {} as CorpusStatistic;
         results.push({
           issue_key: docId,
           keyword: keyword.term,
@@ -466,8 +535,8 @@ export class TFIDFProcessor {
   /**
    * Export corpus statistics for database storage
    */
-  exportCorpusStatsForDB() {
-    const results = [];
+  exportCorpusStatsForDB(): CorpusStatsExport[] {
+    const results: CorpusStatsExport[] = [];
     
     this.corpusStats.forEach((stats, term) => {
       results.push({

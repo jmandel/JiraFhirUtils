@@ -3,20 +3,144 @@ import { XMLParser } from "fast-xml-parser";
 import path from "path";
 import fs from "fs";
 import { promises as fsPromises } from "fs";
-import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database-utils";
+import { getDatabasePath, setupDatabaseCliArgs, type CommandOptions } from "@jira-fhir-utils/database-utils";
 
 // --- Configuration ---
 const UPDATE_SUBDIRECTORY = "updates"; // The subdirectory containing your update XML files
 const XML_GLOB_PATTERN = "*.xml";
 
+// --- Type Definitions ---
+
+interface XmlItem {
+  key?: {
+    "#text": string;
+    "@_id": string;
+  };
+  title?: string;
+  link?: string;
+  project?: {
+    "@_id": string;
+    "@_key": string;
+  };
+  description?: string;
+  summary?: string;
+  type?: {
+    "#text": string;
+    "@_id": string;
+  };
+  priority?: {
+    "#text": string;
+    "@_id": string;
+  };
+  status?: {
+    "#text": string;
+    "@_id": string;
+    statusCategory?: {
+      "@_id": string;
+      "@_key": string;
+      "@_colorName": string;
+    };
+  };
+  resolution?: {
+    "#text": string;
+    "@_id": string;
+  };
+  assignee?: {
+    "@_username": string;
+  };
+  reporter?: {
+    "@_username": string;
+  };
+  created?: string;
+  updated?: string;
+  resolved?: string;
+  watches?: string | number;
+  customfields?: {
+    customfield: CustomField[];
+  };
+  comments?: {
+    comment: Comment[];
+  };
+}
+
+interface CustomField {
+  "@_id": string;
+  "@_key": string;
+  customfieldname: string;
+  customfieldvalues?: {
+    customfieldvalue: any;
+  };
+}
+
+interface Comment {
+  "@_id": string;
+  "@_author": string;
+  "@_created": string;
+  "#text": string;
+}
+
+interface ParsedXmlData {
+  rss?: {
+    channel?: {
+      item?: XmlItem[];
+    };
+  };
+}
+
+interface IssueData {
+  key: string;
+  id: string;
+  title?: string;
+  link?: string;
+  project_id?: string;
+  project_key?: string;
+  description?: string;
+  summary?: string;
+  type?: string;
+  type_id?: string;
+  priority?: string;
+  priority_id?: string;
+  status?: string;
+  status_id?: string;
+  status_category_id?: string;
+  status_category_key?: string;
+  status_category_color?: string;
+  resolution?: string;
+  resolution_id?: string;
+  assignee?: string;
+  reporter?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  resolved_at?: string | null;
+  watches: number;
+}
+
+interface CustomFieldData {
+  issue_key: string;
+  field_id: string;
+  field_key: string;
+  field_name: string;
+  field_value: any;
+}
+
+interface CommentData {
+  comment_id: string;
+  issue_key: string;
+  author: string;
+  created_at: string | null;
+  body: string;
+}
+
+interface LoadUpdatesOptions extends CommandOptions {
+  updateDir?: string;
+}
+
 // --- Helper Functions ---
 
 /**
  * Parses a date string and returns it in ISO 8601 format.
- * @param {string | undefined} dateString
- * @returns {string | null}
  */
-function toISO(dateString) {
+function toISO(dateString: string | undefined): string | null {
     if (!dateString) return null;
     const date = new Date(dateString);
     return isNaN(date.getTime()) ? null : date.toISOString();
@@ -24,10 +148,8 @@ function toISO(dateString) {
 
 /**
  * Processes a single XML update file and loads its data into the database.
- * @param {string} filePath - The path to the XML file.
- * @param {Database} db - The database instance.
  */
-async function processUpdateFile(filePath, db) {
+async function processUpdateFile(filePath: string, db: Database): Promise<void> {
   console.log(`\nProcessing update file: ${filePath}`);
 
   try {
@@ -36,13 +158,13 @@ async function processUpdateFile(filePath, db) {
       ignoreAttributes: false,
       attributeNamePrefix: "@_",
       textNodeName: "#text",
-      isArray: (name, jpath) => {
+      isArray: (name: string, jpath: string): boolean => {
           return jpath === "rss.channel.item" ||
                  jpath === "rss.channel.item.customfields.customfield" ||
                  jpath === "rss.channel.item.comments.comment";
       }
     });
-    const data = parser.parse(fileContent);
+    const data = parser.parse(fileContent) as ParsedXmlData;
 
     const items = data?.rss?.channel?.item;
     if (!items || items.length === 0) {
@@ -98,7 +220,7 @@ async function processUpdateFile(filePath, db) {
     );
 
     // Create a transaction function to process each item atomically
-    const processItem = db.transaction(item => {
+    const processItem = db.transaction((item: XmlItem) => {
           const issueKey = item?.key?.["#text"];
           if (!issueKey || typeof issueKey !== "string"){
               console.warn(`Skipping item with missing key in ${filePath}: ${item.title || "Unknown Title"}`);
@@ -106,9 +228,9 @@ async function processUpdateFile(filePath, db) {
           }
 
         // 1. Upsert the main issue
-        upsertIssue.run({
+        const issueData: IssueData = {
             key: issueKey,
-            id: item.key["@_id"],
+            id: item.key?.["@_id"] || "",
             title: item.title,
             link: item.link,
             project_id: item.project?.["@_id"],
@@ -132,7 +254,9 @@ async function processUpdateFile(filePath, db) {
             updated_at: toISO(item.updated),
             resolved_at: toISO(item.resolved),
             watches: Number(item.watches) || 0,
-        });
+        };
+
+        upsertIssue.run(issueData);
 
         // 2. Replace custom fields
         deleteCustomFields.run(issueKey);
@@ -144,13 +268,15 @@ async function processUpdateFile(filePath, db) {
                     ? (valueNode['#text'] || JSON.stringify(valueNode))
                     : valueNode;
 
-                insertCustomField.run({
+                const customFieldData: CustomFieldData = {
                     issue_key: issueKey,
                     field_id: field["@_id"],
                     field_key: field["@_key"],
                     field_name: field.customfieldname,
                     field_value: value,
-                });
+                };
+
+                insertCustomField.run(customFieldData);
             }
         }
 
@@ -158,13 +284,15 @@ async function processUpdateFile(filePath, db) {
         const comments = item.comments?.comment;
         if (comments) {
             for(const comment of comments) {
-                insertComment.run({
+                const commentData: CommentData = {
                     comment_id: comment["@_id"],
                     issue_key: issueKey,
                     author: comment["@_author"],
                     created_at: toISO(comment["@_created"]),
                     body: comment["#text"],
-                });
+                };
+
+                insertComment.run(commentData);
             }
         }
     });
@@ -183,18 +311,18 @@ async function processUpdateFile(filePath, db) {
 }
 
 // --- Main Execution ---
-async function main() {
+async function main(): Promise<void> {
   console.log("Starting JIRA XML update process...");
 
   // Setup CLI arguments
-  const options = setupDatabaseCliArgs('load-updates', 'Load JIRA XML updates into SQLite database', {
+  const options = await setupDatabaseCliArgs('load-updates', 'Load JIRA XML updates into SQLite database', {
     '--update-dir <dir>': {
       description: 'Directory containing update XML files',
       defaultValue: UPDATE_SUBDIRECTORY
     }
-  });
+  }) as LoadUpdatesOptions;
 
-  const databasePath = getDatabasePath();
+  const databasePath = await getDatabasePath();
   const updateDir = options.updateDir || UPDATE_SUBDIRECTORY;
   
   console.log(`Using database: ${databasePath}`);
@@ -220,7 +348,7 @@ async function main() {
   const pattern = path.join(updatePath, XML_GLOB_PATTERN).replace(/\\/g, '/');
   const glob = new Bun.Glob(XML_GLOB_PATTERN);
   const files = await Array.fromAsync(glob.scan({ cwd: updateDir, onlyFiles: true }))
-    .then(results => results.map(file => path.join(updateDir, file)));
+    .then((results: string[]) => results.map((file: string) => path.join(updateDir, file)));
 
   if (files.length === 0) {
     console.log(`No XML files found in subdirectory '${updateDir}'.`);

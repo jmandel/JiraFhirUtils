@@ -9,13 +9,133 @@ import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database
 const INITIAL_SUBDIRECTORY = "bulk"; // The subdirectory containing the initial XML files
 const XML_GLOB_PATTERN = "*.xml";
 
+// --- Type Definitions ---
+
+interface XmlNode {
+  "#text"?: string;
+  "@_id"?: string;
+  "@_key"?: string;
+  "@_username"?: string;
+  "@_author"?: string;
+  "@_created"?: string;
+  "@_colorName"?: string;
+  [key: string]: any;
+}
+
+interface CustomFieldValue {
+  "#text"?: string;
+  [key: string]: any;
+}
+
+interface CustomField {
+  "@_id"?: string;
+  "@_key"?: string;
+  customfieldname?: string;
+  customfieldvalues?: {
+    customfieldvalue?: CustomFieldValue | CustomFieldValue[];
+  };
+}
+
+interface Comment {
+  "@_id"?: string;
+  "@_author"?: string;
+  "@_created"?: string;
+  "#text"?: string;
+}
+
+interface JiraItem {
+  key?: XmlNode;
+  title?: string;
+  link?: string;
+  project?: XmlNode;
+  description?: string;
+  summary?: string;
+  type?: XmlNode;
+  priority?: XmlNode;
+  status?: {
+    "#text"?: string;
+    "@_id"?: string;
+    statusCategory?: XmlNode;
+  };
+  resolution?: XmlNode;
+  assignee?: XmlNode;
+  reporter?: XmlNode;
+  created?: string;
+  updated?: string;
+  resolved?: string;
+  watches?: string | number;
+  customfields?: {
+    customfield?: CustomField[];
+  };
+  comments?: {
+    comment?: Comment[];
+  };
+}
+
+interface XmlData {
+  rss?: {
+    channel?: {
+      item?: JiraItem[];
+    };
+  };
+}
+
+interface IssueRecord {
+  key: string;
+  id: string | undefined;
+  title: string | undefined;
+  link: string | undefined;
+  project_id: string | undefined;
+  project_key: string | undefined;
+  description: string | undefined;
+  summary: string | undefined;
+  type: string | undefined;
+  type_id: string | undefined;
+  priority: string | undefined;
+  priority_id: string | undefined;
+  status: string | undefined;
+  status_id: string | undefined;
+  status_category_id: string | undefined;
+  status_category_key: string | undefined;
+  status_category_color: string | undefined;
+  resolution: string | undefined;
+  resolution_id: string | undefined;
+  assignee: string | undefined;
+  reporter: string | undefined;
+  created_at: string | null;
+  updated_at: string | null;
+  resolved_at: string | null;
+  watches: number;
+}
+
+interface CustomFieldRecord {
+  issue_key: string;
+  field_id: string | undefined;
+  field_key: string | undefined;
+  field_name: string | undefined;
+  field_value: string | null;
+}
+
+interface CommentRecord {
+  comment_id: string | undefined;
+  issue_key: string;
+  author: string | undefined;
+  created_at: string | null;
+  body: string | undefined;
+}
+
+interface CommandOptions {
+  initialDir?: string;
+  [key: string]: any;
+}
+
 // --- Database Setup ---
 
 /**
  * Initializes the SQLite database and creates the necessary tables.
- * @param {Database} db - The database instance.
+ * @param db - The database instance.
  */
-function setupDatabase(db) {
+function setupDatabase(db: Database): void {
   console.log(`Initializing database...`);
   db.exec("PRAGMA journal_mode = WAL;"); // for better performance and concurrency
 
@@ -83,10 +203,10 @@ function setupDatabase(db) {
 /**
  * Parses a date string and returns it in ISO 8601 format.
  * Returns null if the date is invalid or not provided.
- * @param {string | undefined} dateString
- * @returns {string | null}
+ * @param dateString - The date string to parse
+ * @returns ISO 8601 formatted date string or null
  */
-function toISO(dateString) {
+function toISO(dateString: string | undefined): string | null {
     if (!dateString) return null;
     const date = new Date(dateString);
     return isNaN(date.getTime()) ? null : date.toISOString();
@@ -95,10 +215,10 @@ function toISO(dateString) {
 
 /**
  * Processes a single XML file and loads its data into the database.
- * @param {string} filePath - The path to the XML file.
- * @param {Database} db - The database instance.
+ * @param filePath - The path to the XML file.
+ * @param db - The database instance.
  */
-async function processXmlFile(filePath, db) {
+async function processXmlFile(filePath: string, db: Database): Promise<void> {
   console.log(`\nProcessing file: ${filePath}`);
 
   try {
@@ -108,13 +228,13 @@ async function processXmlFile(filePath, db) {
       attributeNamePrefix: "@_",
       textNodeName: "#text",
       // Handle cases where a tag can be single or an array
-      isArray: (name, jpath, isLeafNode, isAttribute) => {
+      isArray: (name: string, jpath: string, isLeafNode: boolean, isAttribute: boolean): boolean => {
           return jpath === "rss.channel.item" ||
                  jpath === "rss.channel.item.customfields.customfield" ||
                  jpath === "rss.channel.item.comments.comment";
       }
     });
-    const data = parser.parse(fileContent);
+    const data = parser.parse(fileContent) as XmlData;
 
     const items = data?.rss?.channel?.item;
     if (!items || items.length === 0) {
@@ -139,7 +259,7 @@ async function processXmlFile(filePath, db) {
     );
 
     // Use a transaction for bulk inserts from a single file
-    const insertAll = db.transaction(items => {
+    const insertAll = db.transaction((items: JiraItem[]) => {
         for (const item of items) {
             const issueKey = item?.key?.["#text"];
             if (!issueKey || typeof issueKey !== "string"){
@@ -147,9 +267,9 @@ async function processXmlFile(filePath, db) {
                 continue;
             }
 
-            insertIssue.run({
+            const issueRecord: IssueRecord = {
                 key: issueKey,
-                id: item.key["@_id"],
+                id: item.key?.["@_id"],
                 title: item.title,
                 link: item.link,
                 project_id: item.project?.["@_id"],
@@ -173,27 +293,36 @@ async function processXmlFile(filePath, db) {
                 updated_at: toISO(item.updated),
                 resolved_at: toISO(item.resolved),
                 watches: Number(item.watches) || 0,
-            });
+            };
+
+            insertIssue.run(issueRecord);
 
             // Process custom fields
             const customFields = item.customfields?.customfield;
             if (customFields) {
                 for (const field of customFields) {
                     const valueNode = field.customfieldvalues?.customfieldvalue;
-                    let value = null;
+                    let value: string | null = null;
                     if (typeof valueNode === 'object' && valueNode !== null) {
-                        value = valueNode['#text'] || JSON.stringify(valueNode);
-                    } else {
-                        value = valueNode;
+                        if (Array.isArray(valueNode)) {
+                            // Handle array of values
+                            value = valueNode.map(v => v['#text'] || JSON.stringify(v)).join(', ');
+                        } else {
+                            value = valueNode['#text'] || JSON.stringify(valueNode);
+                        }
+                    } else if (valueNode !== undefined) {
+                        value = String(valueNode);
                     }
 
-                    insertCustomField.run({
-                        issue_key: item.key["#text"],
+                    const customFieldRecord: CustomFieldRecord = {
+                        issue_key: issueKey,
                         field_id: field["@_id"],
                         field_key: field["@_key"],
                         field_name: field.customfieldname,
                         field_value: value,
-                    });
+                    };
+
+                    insertCustomField.run(customFieldRecord);
                 }
             }
 
@@ -201,13 +330,15 @@ async function processXmlFile(filePath, db) {
             const comments = item.comments?.comment;
             if (comments) {
                 for(const comment of comments) {
-                    insertComment.run({
+                    const commentRecord: CommentRecord = {
                         comment_id: comment["@_id"],
-                        issue_key: item.key["#text"],
+                        issue_key: issueKey,
                         author: comment["@_author"],
                         created_at: toISO(comment["@_created"]),
                         body: comment["#text"],
-                    });
+                    };
+
+                    insertComment.run(commentRecord);
                 }
             }
         }
@@ -224,20 +355,20 @@ async function processXmlFile(filePath, db) {
 
 
 // --- Main Execution ---
-async function main() {
+async function main(): Promise<void> {
   console.log("Starting JIRA XML to SQLite import process...");
 
   // Setup CLI arguments
-  const options = setupDatabaseCliArgs('load-initial', 'Load initial JIRA XML files into SQLite database', {
+  const options = await setupDatabaseCliArgs('load-initial', 'Load initial JIRA XML files into SQLite database', {
     '--initial-dir <dir>': {
       description: 'Directory containing initial XML files',
       defaultValue: INITIAL_SUBDIRECTORY
     }
-  });
+  }) as CommandOptions;
 
-  let databasePath;
+  let databasePath: string;
   try {
-    databasePath = getDatabasePath();
+    databasePath = await getDatabasePath();
   } catch (error) {
     databasePath = path.join(process.cwd(), 'jira_issues.sqlite').replace(/\\/g, '/');
   }

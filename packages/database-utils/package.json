@@ -3,14 +3,19 @@
   "version": "1.0.0",
   "description": "Shared database utilities for FHIR Jira processing",
   "type": "module",
-  "main": "database-utils.js",
+  "main": "database-utils.ts",
   "exports": {
-    ".": "./database-utils.js"
+    ".": "./database-utils.ts"
   },
   "scripts": {
     "test": "echo \"No tests specified\""
   },
-  "dependencies": {},
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  },
   "keywords": ["jira", "fhir", "database", "sqlite"],
   "author": "",
   "license": "ISC"

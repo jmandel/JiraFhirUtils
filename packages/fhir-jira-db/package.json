@@ -5,20 +5,21 @@
   "type": "module",
   "main": "index.js",
   "bin": {
-    "download-issues": "./download-issues.js",
-    "extract-archives": "./extract-archives.js",
-    "load-initial": "./load-initial.js",
-    "load-updates": "./load-updates.js",
-    "create-fts": "./create-fts.js",
-    "create-tfidf": "./create-tfidf.js"
+    "download-issues": "./download-issues.ts",
+    "extract-archives": "./extract-archives.ts",
+    "load-initial": "./load-initial.ts",
+    "load-updates": "./load-updates.ts",
+    "create-fts": "./create-fts.ts",
+    "create-tfidf": "./create-tfidf.ts"
   },
   "scripts": {
-    "download-issues": "bun run download-issues.js",
-    "extract-archives": "bun run extract-archives.js",
-    "load-initial": "bun run load-initial.js",
-    "load-updates": "bun run load-updates.js",
-    "create-fts": "bun run create-fts.js",
-    "create-tfidf": "bun run create-tfidf.js"
+    "download-issues": "bun run download-issues.ts",
+    "extract-archives": "bun run extract-archives.ts",
+    "load-initial": "bun run load-initial.ts",
+    "load-updates": "bun run load-updates.ts",
+    "create-fts": "bun run create-fts.ts",
+    "create-tfidf": "bun run create-tfidf.ts",
+    "test-tfidf": "bun run test-tfidf.ts"
   },
   "dependencies": {
     "@jira-fhir-utils/database-utils": "workspace:*",

@@ -1,9 +1,9 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { ListToolsRequestSchema, CallToolRequestSchema, CallToolRequest, CallToolResult, ListToolsResult } from '@modelcontextprotocol/sdk/types.js';
 import { Database } from 'bun:sqlite';
 import path from 'path';
 import fs from 'fs';
@@ -19,23 +19,108 @@ const _defaultSearchFields = [
   'description', 
   'summary', 
   'resolution_description'
-];
+] as const;
 
+type SearchField = typeof _defaultSearchFields[number];
 
-// Parse command line arguments
-const options = setupDatabaseCliArgs('fhir-jira-mcp', 'FHIR JIRA MCP Server', {
-  '-p, --port <port>': {
-    description: 'HTTP server port (optional)',
-    defaultValue: undefined
+interface DatabaseOptions {
+  port?: number;
+  [key: string]: any;
+}
+
+interface IssueRecord {
+  issue_key: string;
+  project_key: string;
+  work_group: string;
+  title: string;
+  description: string;
+  summary: string;
+  resolution_description: string;
+  resolution: string;
+  status: string;
+  assignee: string;
+  updated_at: string;
+  issue_int: number;
+  related_url?: string;
+  related_artifacts?: string;
+  related_pages?: string;
+  [key: string]: any;
+}
+
+interface ListIssuesArgs {
+  project_key?: string;
+  work_group?: string;
+  resolution?: string;
+  status?: string;
+  assignee?: string;
+  limit?: number;
+  offset?: number;
+}
+
+interface SearchIssuesArgs {
+  keywords: string;
+  search_fields?: SearchField[];
+  limit?: number;
+}
+
+interface RelatedIssuesArgs {
+  issue_key: string;
+  limit?: number;
+}
+
+interface IssueDetailsArgs {
+  issue_key: string;
+}
+
+interface IssueCommentsArgs {
+  issue_key: string;
+}
+
+interface CustomFieldRecord {
+  field_name: string;
+  field_value: string;
+}
+
+interface CommentRecord {
+  issue_key: string;
+  created_at: string;
+  [key: string]: any;
+}
+
+interface KeywordRecord {
+  keyword: string;
+  tfidf_score: number;
+}
+
+interface ProjectKeyRecord {
+  project_key: string;
+}
+
+interface WorkGroupRecord {
+  work_group: string;
+}
+
+// Parse command line arguments (async function call will be handled in main execution)
+let options: DatabaseOptions = {};
+
+async function initializeOptions(): Promise<void> {
+  options = await setupDatabaseCliArgs('fhir-jira-mcp', 'FHIR JIRA MCP Server', {
+    '-p, --port <port>': {
+      description: 'HTTP server port (optional)',
+      defaultValue: undefined
+    }
+  });
+
+  // Convert port to number if provided
+  if (options.port) {
+    options.port = parseInt(options.port as string);
   }
-});
-
-// Convert port to number if provided
-if (options.port) {
-  options.port = parseInt(options.port);
 }
 
 class JiraIssuesMCPServer {
+  private server: Server;
+  private db: Database | null = null;
+
   constructor() {
     this.server = new Server({
       name: 'fhir-jira-mcp',
@@ -46,23 +131,23 @@ class JiraIssuesMCPServer {
       },
     });
 
-    this.db = null;
     this.setupHandlers();
   }
 
-  async init() {
+  async init(): Promise<void> {
     try {
-      const dbPath = getDatabasePath();
+      const dbPath = await getDatabasePath();
       this.db = new Database(dbPath, { readonly: true });
       console.error(`Connected to database at ${dbPath}`);
     } catch (error) {
-      console.error(`Failed to connect to database: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to connect to database: ${errorMessage}`);
       throw error;
     }
   }
 
-  setupHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  private setupHandlers(): void {
+    this.server.setRequestHandler(ListToolsRequestSchema, async (): Promise<ListToolsResult> => ({
       tools: [
         {
           name: 'list_issues',
@@ -121,7 +206,7 @@ class JiraIssuesMCPServer {
               },
               limit: { type: 'number', description: 'Maximum number of results (default: 20)', default: 20 }
             },
-            required: ['query'],
+            required: ['keywords'],
           },
         },
         {
@@ -165,22 +250,22 @@ class JiraIssuesMCPServer {
       ],
     }));
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    this.server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<CallToolResult> => {
       const { name, arguments: args } = request.params;
 
       switch (name) {
         case 'list_issues':
-          return await this.listIssues(args);
+          return await this.listIssues(args as ListIssuesArgs);
         case 'search_issues_by_keywords':
-          return await this.searchIssuesByKeywords(args);
+          return await this.searchIssuesByKeywords(args as SearchIssuesArgs);
         case 'list_related_issues':
-          return await this.listRelatedIssues(args);
+          return await this.listRelatedIssues(args as RelatedIssuesArgs);
         case 'find_related_issues':
-          return await this.findRelatedIssues(args);
+          return await this.findRelatedIssues(args as RelatedIssuesArgs);
         case 'get_issue_details':
-          return await this.getIssueDetails(args);
+          return await this.getIssueDetails(args as IssueDetailsArgs);
         case 'get_issue_comments':
-          return await this.getIssueComments(args);
+          return await this.getIssueComments(args as IssueCommentsArgs);
         case 'list_project_keys':
           return await this.listProjectKeys();
         case 'list_work_groups':
@@ -191,12 +276,14 @@ class JiraIssuesMCPServer {
     });
   }
 
-  async listIssues(args) {
+  private async listIssues(args: ListIssuesArgs): Promise<CallToolResult> {
+    if (!this.db) throw new Error('Database not initialized');
+    
     const { project_key, work_group, resolution, status, assignee, limit = 50, offset = 0 } = args;
     
-    const searchConditions = [];
+    const searchConditions: string[] = [];
     let query = 'SELECT * FROM issues_fts';
-    const params = {};
+    const params: Record<string, any> = {};
     
     if (project_key) {
       searchConditions.push('project_key = @project_key');
@@ -235,7 +322,7 @@ class JiraIssuesMCPServer {
     try {
       // console.log(`Executing query: ${query} with params:`, params);
       const stmt = this.db.prepare(query);
-      const issues = stmt.all(params);
+      const issues = stmt.all(params) as IssueRecord[];
       
       return {
         content: [{
@@ -248,30 +335,34 @@ class JiraIssuesMCPServer {
         }]
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error browsing work queue: ${error.message}`
+          text: `Error browsing work queue: ${errorMessage}`
         }],
         isError: true
       };
     }
   }
 
-    async listRelatedIssues(args) {
+  private async listRelatedIssues(args: RelatedIssuesArgs): Promise<CallToolResult> {
+    if (!this.db) throw new Error('Database not initialized');
+    
     const { issue_key, limit = 10 } = args;
     
     // retrieve the original issue so we can use it for context
     const sourceIssueQuery = 'SELECT * FROM issues_fts WHERE issue_key = ?';
-    let sourceIssue;
+    let sourceIssue: IssueRecord | null;
     try {
       const sourceIssueStatement = this.db.prepare(sourceIssueQuery);
-      sourceIssue = sourceIssueStatement.get(issue_key);
+      sourceIssue = sourceIssueStatement.get(issue_key) as IssueRecord | null;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error finding related tickets: ${error.message}`
+          text: `Error finding related tickets: ${errorMessage}`
         }],
         isError: true
       };
@@ -288,21 +379,22 @@ class JiraIssuesMCPServer {
     }
 
     // get the explicit linked related issues
-    let linkedIssues = [];
+    let linkedIssues: string[] = [];
 
     try {
       const linkedIssuesQuery = `SELECT field_value FROM custom_fields WHERE issue_key = ? AND field_name = 'Related Issues'`;
       const linkedIssuesStatement = this.db.prepare(linkedIssuesQuery);
-      const linkedIssueValue = linkedIssuesStatement.get(issue_key);
+      const linkedIssueValue = linkedIssuesStatement.get(issue_key) as { field_value: string } | null;
 
       if (linkedIssueValue && linkedIssueValue.field_value) {
         linkedIssues = linkedIssueValue.field_value.split(',').map(issue => issue.trim());
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error finding related tickets: ${error.message}`
+          text: `Error finding related tickets: ${errorMessage}`
         }],
         isError: true
       };
@@ -313,21 +405,22 @@ class JiraIssuesMCPServer {
     let keywords = '';
     try {
       const keywordStatement = this.db.prepare(keywordQuery);
-      const keywordRows = keywordStatement.all(issue_key);
+      const keywordRows = keywordStatement.all(issue_key) as KeywordRecord[];
       if (keywordRows.length > 0) {
         keywords = keywordRows.map(row => row.keyword).join(' OR ');
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error retrieving keywords for related issues: ${error.message}`
+          text: `Error retrieving keywords for related issues: ${errorMessage}`
         }],
         isError: true
       };
     }
 
-    const params = { limit, keywords: keywords };
+    const params: Record<string, any> = { limit, keywords: keywords };
 
     // Use FTS5 for efficient searching
     let ftsQuery = 'SELECT issue_key FROM issues_fts WHERE ';
@@ -339,12 +432,12 @@ class JiraIssuesMCPServer {
     params.issue_key = issue_key;
 
     // Add related_url, related_artifacts, related_pages if present
-    ['related_url', 'related_artifacts', 'related_pages'].forEach(field => {
-      if ((sourceIssue[field]) && (sourceIssue[field] !== '')) {
+    (['related_url', 'related_artifacts', 'related_pages'] as const).forEach(field => {
+      if (sourceIssue![field] && sourceIssue![field] !== '') {
         // if the string value has a comma character, split into multiple terms
-        if (typeof sourceIssue[field] === 'string' && sourceIssue[field].includes(',')) {
-          const fieldTerms = [];
-          const terms = sourceIssue[field].split(',').map(term => term.trim());
+        if (typeof sourceIssue![field] === 'string' && sourceIssue![field]!.includes(',')) {
+          const fieldTerms: string[] = [];
+          const terms = sourceIssue![field]!.split(',').map(term => term.trim());
           terms.forEach((term, index) => {
             let searchTerm = term;
             
@@ -369,21 +462,21 @@ class JiraIssuesMCPServer {
           });
           ftsQuery += ` AND (${fieldTerms.join(' OR ')})`;
         } else {
-          let searchTerm = sourceIssue[field];
+          let searchTerm = sourceIssue![field]!;
           
           // For related_url, extract filename from URL
           if (field === 'related_url') {
             try {
-              const url = new URL(sourceIssue[field]);
+              const url = new URL(sourceIssue![field]!);
               let filename = url.pathname.split('/').pop();
               // Remove file extension and fragment
               if (filename) {
                 filename = filename.split('.')[0]; // Remove extension
               }
-              searchTerm = filename || sourceIssue[field]; // fallback to original if no filename
+              searchTerm = filename || sourceIssue![field]!; // fallback to original if no filename
             } catch (e) {
               // If URL parsing fails, use the original value
-              searchTerm = sourceIssue[field];
+              searchTerm = sourceIssue![field]!;
             }
           }
           
@@ -393,7 +486,7 @@ class JiraIssuesMCPServer {
       }
     });
 
-    const matchConditions = [];
+    const matchConditions: string[] = [];
     _defaultSearchFields.forEach(field => {
       matchConditions.push(`${field} MATCH @keywords`);
     });
@@ -404,7 +497,7 @@ class JiraIssuesMCPServer {
     
     try {
       const stmt = this.db.prepare(ftsQuery);
-      const issues = stmt.all(params);
+      const issues = stmt.all(params) as { issue_key: string }[];
       
       return {
         content: [{
@@ -422,30 +515,34 @@ class JiraIssuesMCPServer {
         }]
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error listing related issues: ${error.message}`
+          text: `Error listing related issues: ${errorMessage}`
         }],
         isError: true
       };
     }
   }
 
-  async findRelatedIssues(args) {
+  private async findRelatedIssues(args: RelatedIssuesArgs): Promise<CallToolResult> {
+    if (!this.db) throw new Error('Database not initialized');
+    
     const { issue_key, limit = 10 } = args;
     
     // retrieve the original issue so we can use it for context
     const sourceIssueQuery = 'SELECT * FROM issues_fts WHERE issue_key = ?';
-    let sourceIssue;
+    let sourceIssue: IssueRecord | null;
     try {
       const sourceIssueStatement = this.db.prepare(sourceIssueQuery);
-      sourceIssue = sourceIssueStatement.get(issue_key);
+      sourceIssue = sourceIssueStatement.get(issue_key) as IssueRecord | null;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error finding related tickets: ${error.message}`
+          text: `Error finding related tickets: ${errorMessage}`
         }],
         isError: true
       };
@@ -462,25 +559,26 @@ class JiraIssuesMCPServer {
     }
 
     // get the explicit linked related issues
-    let linkedIssues = [];
+    let linkedIssues: IssueRecord[] = [];
 
     try {
       const linkedIssuesQuery = `SELECT field_value FROM custom_fields WHERE issue_key = ? AND field_name = 'Related Issues'`;
       const linkedIssuesStatement = this.db.prepare(linkedIssuesQuery);
-      const linkedIssueValue = linkedIssuesStatement.get(issue_key);
+      const linkedIssueValue = linkedIssuesStatement.get(issue_key) as { field_value: string } | null;
 
       if (linkedIssueValue && linkedIssueValue.field_value) {
         const relatedIssueKeys = linkedIssueValue.field_value.split(',').map(issue => issue.trim());
         linkedIssues = relatedIssueKeys.map(key => {
-          const issueStmt = this.db.prepare('SELECT * FROM issues_fts WHERE issue_key = ?');
-          return issueStmt.get(key);
-        }).filter(issue => issue); // filter out any null results
+          const issueStmt = this.db!.prepare('SELECT * FROM issues_fts WHERE issue_key = ?');
+          return issueStmt.get(key) as IssueRecord | null;
+        }).filter((issue): issue is IssueRecord => issue !== null); // filter out any null results
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error finding related tickets: ${error.message}`
+          text: `Error finding related tickets: ${errorMessage}`
         }],
         isError: true
       };
@@ -491,21 +589,22 @@ class JiraIssuesMCPServer {
     let keywords = '';
     try {
       const keywordStatement = this.db.prepare(keywordQuery);
-      const keywordRows = keywordStatement.all(issue_key);
+      const keywordRows = keywordStatement.all(issue_key) as KeywordRecord[];
       if (keywordRows.length > 0) {
         keywords = keywordRows.map(row => row.keyword).join(' OR ');
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error retrieving keywords for related issues: ${error.message}`
+          text: `Error retrieving keywords for related issues: ${errorMessage}`
         }],
         isError: true
       };
     }
 
-    const params = { limit, keywords: keywords };
+    const params: Record<string, any> = { limit, keywords: keywords };
 
     // Use FTS5 for efficient searching
     let ftsQuery = 'SELECT * FROM issues_fts WHERE ';
@@ -517,12 +616,12 @@ class JiraIssuesMCPServer {
     params.issue_key = issue_key;
 
     // Add related_url, related_artifacts, related_pages if present
-    ['related_url', 'related_artifacts', 'related_pages'].forEach(field => {
-      if ((sourceIssue[field]) && (sourceIssue[field] !== '')) {
+    (['related_url', 'related_artifacts', 'related_pages'] as const).forEach(field => {
+      if (sourceIssue![field] && sourceIssue![field] !== '') {
         // if the string value has a comma character, split into multiple terms
-        if (typeof sourceIssue[field] === 'string' && sourceIssue[field].includes(',')) {
-          const fieldTerms = [];
-          const terms = sourceIssue[field].split(',').map(term => term.trim());
+        if (typeof sourceIssue![field] === 'string' && sourceIssue![field]!.includes(',')) {
+          const fieldTerms: string[] = [];
+          const terms = sourceIssue![field]!.split(',').map(term => term.trim());
           terms.forEach((term, index) => {
             let searchTerm = term;
             
@@ -547,21 +646,21 @@ class JiraIssuesMCPServer {
           });
           ftsQuery += ` AND (${fieldTerms.join(' OR ')})`;
         } else {
-          let searchTerm = sourceIssue[field];
+          let searchTerm = sourceIssue![field]!;
           
           // For related_url, extract filename from URL
           if (field === 'related_url') {
             try {
-              const url = new URL(sourceIssue[field]);
+              const url = new URL(sourceIssue![field]!);
               let filename = url.pathname.split('/').pop();
               // Remove file extension and fragment
               if (filename) {
                 filename = filename.split('.')[0]; // Remove extension
               }
-              searchTerm = filename || sourceIssue[field]; // fallback to original if no filename
+              searchTerm = filename || sourceIssue![field]!; // fallback to original if no filename
             } catch (e) {
               // If URL parsing fails, use the original value
-              searchTerm = sourceIssue[field];
+              searchTerm = sourceIssue![field]!;
             }
           }
           
@@ -571,7 +670,7 @@ class JiraIssuesMCPServer {
       }
     });
 
-    const matchConditions = [];
+    const matchConditions: string[] = [];
     _defaultSearchFields.forEach(field => {
       matchConditions.push(`${field} MATCH @keywords`);
     });
@@ -582,7 +681,7 @@ class JiraIssuesMCPServer {
     
     try {
       const stmt = this.db.prepare(ftsQuery);
-      const issues = stmt.all(params);
+      const issues = stmt.all(params) as IssueRecord[];
       
       return {
         content: [{
@@ -600,22 +699,25 @@ class JiraIssuesMCPServer {
         }]
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error finding related issues: ${error.message}`
+          text: `Error finding related issues: ${errorMessage}`
         }],
         isError: true
       };
     }
   }
 
-  async searchIssuesByKeywords(args) {
+  private async searchIssuesByKeywords(args: SearchIssuesArgs): Promise<CallToolResult> {
+    if (!this.db) throw new Error('Database not initialized');
+    
     const { keywords, search_fields, limit = 50 } = args;
     
     // Use FTS5 for efficient searching
     let ftsQuery = 'SELECT * FROM issues_fts WHERE ';
-    const searchConditions = [];
+    const searchConditions: string[] = [];
     
     const fieldsToSearch = search_fields && search_fields.length > 0 
       ? search_fields 
@@ -633,7 +735,7 @@ class JiraIssuesMCPServer {
     try {
       // console.log(`Executing query: ${ftsQuery} with params:`, { query, limit });
       const stmt = this.db.prepare(ftsQuery);
-      const issues = stmt.all({ keywords, limit });
+      const issues = stmt.all({ keywords, limit }) as IssueRecord[];
       
       return {
         content: [{
@@ -647,22 +749,25 @@ class JiraIssuesMCPServer {
         }]
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error searching for issues: ${error.message}`
+          text: `Error searching for issues: ${errorMessage}`
         }],
         isError: true
       };
     }
   }
 
-  async getIssueDetails(args) {
+  private async getIssueDetails(args: IssueDetailsArgs): Promise<CallToolResult> {
+    if (!this.db) throw new Error('Database not initialized');
+    
     const { issue_key } = args;
     
     try {
       const issueStmt = this.db.prepare('SELECT * FROM issues WHERE key = ?');
-      const issue = issueStmt.get(issue_key);
+      const issue = issueStmt.get(issue_key) as IssueRecord | null;
       
       if (!issue) {
         return {
@@ -678,9 +783,9 @@ class JiraIssuesMCPServer {
       const customFieldsStmt = this.db.prepare(
         'SELECT field_name, field_value FROM custom_fields WHERE issue_key = ?'
       );
-      const customFields = customFieldsStmt.all(issue_key);
+      const customFields = customFieldsStmt.all(issue_key) as CustomFieldRecord[];
       
-      const customFieldsMap = {};
+      const customFieldsMap: Record<string, string> = {};
       customFields.forEach(field => {
         customFieldsMap[field.field_name] = field.field_value;
       });
@@ -689,7 +794,7 @@ class JiraIssuesMCPServer {
       const commentCountStmt = this.db.prepare(
         'SELECT COUNT(*) as count FROM comments WHERE issue_key = ?'
       );
-      const commentCount = commentCountStmt.get(issue_key).count;
+      const commentCount = (commentCountStmt.get(issue_key) as { count: number }).count;
       
       const result = {
         ...issue,
@@ -704,24 +809,27 @@ class JiraIssuesMCPServer {
         }]
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error getting issue details: ${error.message}`
+          text: `Error getting issue details: ${errorMessage}`
         }],
         isError: true
       };
     }
   }
 
-  async getIssueComments(args) {
+  private async getIssueComments(args: IssueCommentsArgs): Promise<CallToolResult> {
+    if (!this.db) throw new Error('Database not initialized');
+    
     const { issue_key } = args;
     
     try {
       const stmt = this.db.prepare(
         'SELECT * FROM comments WHERE issue_key = ? ORDER BY created_at DESC'
       );
-      const comments = stmt.all(issue_key);
+      const comments = stmt.all(issue_key) as CommentRecord[];
       
       return {
         content: [{
@@ -734,20 +842,23 @@ class JiraIssuesMCPServer {
         }]
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error getting comments: ${error.message}`
+          text: `Error getting comments: ${errorMessage}`
         }],
         isError: true
       };
     }
   }
 
-  async listProjectKeys() {
+  private async listProjectKeys(): Promise<CallToolResult> {
+    if (!this.db) throw new Error('Database not initialized');
+    
     try {
       const stmt = this.db.prepare('SELECT DISTINCT project_key FROM issues ORDER BY project_key');
-      const projects = stmt.all();
+      const projects = stmt.all() as ProjectKeyRecord[];
       
       return {
         content: [{
@@ -759,22 +870,25 @@ class JiraIssuesMCPServer {
         }]
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error listing project keys: ${error.message}`
+          text: `Error listing project keys: ${errorMessage}`
         }],
         isError: true
       };
     }
   }
 
-  async listWorkGroups() {
+  private async listWorkGroups(): Promise<CallToolResult> {
+    if (!this.db) throw new Error('Database not initialized');
+    
     try {
       const stmt = this.db.prepare(
         `SELECT DISTINCT(work_group) as work_group FROM issues_fts`
       );
-      const workGroups = stmt.all();
+      const workGroups = stmt.all() as WorkGroupRecord[];
       
       return {
         content: [{
@@ -786,17 +900,18 @@ class JiraIssuesMCPServer {
         }]
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         content: [{
           type: 'text',
-          text: `Error listing work groups: ${error.message}`
+          text: `Error listing work groups: ${errorMessage}`
         }],
         isError: true
       };
     }
   }
 
-  async run() {
+  async run(): Promise<void> {
     await this.init();
     
     // Always start stdio transport
@@ -813,7 +928,7 @@ class JiraIssuesMCPServer {
       
       Bun.serve({
         port: options.port,
-        async fetch(req) {
+        async fetch(req: Request): Promise<Response> {
           const url = new URL(req.url);
           
           // Health check endpoint
@@ -860,19 +975,30 @@ class JiraIssuesMCPServer {
             
             try {
               // Create a proper HTTP-like response interface for the transport
-              const response = {
-                writeHead: (statusCode, headers = {}) => {
+              interface MockResponse {
+                writeHead: (statusCode: number, headers?: Record<string, string>) => void;
+                setHeader: (name: string, value: string) => void;
+                write: (chunk: string) => void;
+                end: (chunk?: string) => void;
+                _statusCode: number;
+                _headers: Record<string, string>;
+                _body: string;
+                _ended: boolean;
+              }
+
+              const response: MockResponse = {
+                writeHead: (statusCode: number, headers: Record<string, string> = {}) => {
                   response._statusCode = statusCode;
                   response._headers = { ...response._headers, ...headers };
                 },
-                setHeader: (name, value) => {
+                setHeader: (name: string, value: string) => {
                   response._headers = response._headers || {};
                   response._headers[name] = value;
                 },
-                write: (chunk) => {
+                write: (chunk: string) => {
                   response._body = (response._body || '') + chunk;
                 },
-                end: (chunk) => {
+                end: (chunk?: string) => {
                   if (chunk) response._body = (response._body || '') + chunk;
                   response._ended = true;
                 },
@@ -886,7 +1012,7 @@ class JiraIssuesMCPServer {
               };
 
               // Call the transport's handleRequest with both req and res
-              await httpTransport.handleRequest(req, response);
+              await httpTransport.handleRequest(req as any, response as any);
               
               // Return the Bun Response
               return new Response(response._body, {
@@ -894,7 +1020,8 @@ class JiraIssuesMCPServer {
                 headers: response._headers
               });
             } catch (error) {
-              console.error('Error handling MCP request:', error);
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              console.error('Error handling MCP request:', errorMessage);
               return new Response(JSON.stringify({ 
                 jsonrpc: '2.0',
                 error: { 
@@ -922,5 +1049,10 @@ class JiraIssuesMCPServer {
   }
 }
 
-const server = new JiraIssuesMCPServer();
-server.run().catch(console.error);
+async function main(): Promise<void> {
+  await initializeOptions();
+  const server = new JiraIssuesMCPServer();
+  await server.run();
+}
+
+main().catch(console.error);

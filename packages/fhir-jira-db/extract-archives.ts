@@ -4,15 +4,15 @@ import { fileURLToPath } from "url";
 import { $ } from "bun";
 
 // --- Configuration ---
-const BULK_ARCHIVE = "bulk.tar.gz";
-const UPDATES_ARCHIVE = "updates.tar.gz";
-const BULK_DIR = "bulk";
-const UPDATES_DIR = "updates";
+const BULK_ARCHIVE: string = "bulk.tar.gz";
+const UPDATES_ARCHIVE: string = "updates.tar.gz";
+const BULK_DIR: string = "bulk";
+const UPDATES_DIR: string = "updates";
 
 // --- Main extraction function ---
-async function extractArchive(archivePath, targetDir) {
-  const fullArchivePath = path.resolve(archivePath);
-  const fullTargetDir = path.resolve(targetDir);
+async function extractArchive(archivePath: string, targetDir: string): Promise<boolean> {
+  const fullArchivePath: string = path.resolve(archivePath);
+  const fullTargetDir: string = path.resolve(targetDir);
   
   if (!fs.existsSync(fullArchivePath)) {
     console.error(`Archive not found: ${fullArchivePath}`);
@@ -34,23 +34,24 @@ async function extractArchive(archivePath, targetDir) {
     console.log(`✓ Successfully extracted ${archivePath}`);
     return true;
   } catch (error) {
-    console.error(`✗ Failed to extract ${archivePath}:`, error.message);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`✗ Failed to extract ${archivePath}:`, errorMessage);
     return false;
   }
 }
 
 // --- Main execution ---
-async function main() {
+async function main(): Promise<void> {
   console.log("JIRA Archive Extraction Utility");
   console.log("===============================\n");
   
-  const __filename = fileURLToPath(import.meta.url);
-  const scriptDir = path.dirname(__filename);
+  const __filename: string = fileURLToPath(import.meta.url);
+  const scriptDir: string = path.dirname(__filename);
   process.chdir(scriptDir);
   
   console.log(`Working directory: ${process.cwd()}\n`);
   
-  let success = true;
+  let success: boolean = true;
   
   success = await extractArchive(BULK_ARCHIVE, BULK_DIR) && success;
   
@@ -64,7 +65,8 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error("Unexpected error:", error);
+main().catch((error: unknown) => {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  console.error("Unexpected error:", errorMessage);
   process.exit(1);
 });
