@@ -78,8 +78,9 @@ function generateWeekRanges(limit: number | null = null): WeekRange[] {
   return weeks;
 }
 
-function generateJqlQuery(week: WeekRange, specification?: string): string {
-  const baseQuery = `project = "FHIR Specification Feedback" and updatedDate < '${week.end}' and updatedDate >= '${week.start}' order by updated asc`;
+function generateJqlQuery(week: WeekRange, specification?: string, upperBound?: string): string {
+  const endDate = upperBound || week.end;
+  const baseQuery = `project = "FHIR Specification Feedback" and updated <= '${endDate} 23:59:59' and updated >= '${week.start} 00:00:00' order by updated asc`;
   
   if (specification) {
     return `Specification = "${specification}" and ${baseQuery}`;
@@ -88,8 +89,8 @@ function generateJqlQuery(week: WeekRange, specification?: string): string {
   }
 }
 
-function generateUrl(week: WeekRange, specification?: string): string {
-  const jqlQuery = generateJqlQuery(week, specification);
+function generateUrl(week: WeekRange, specification?: string, upperBound?: string): string {
+  const jqlQuery = generateJqlQuery(week, specification, upperBound);
   const encodedJqlQuery = encodeURIComponent(jqlQuery);
   return `https://jira.hl7.org/sr/jira.issueviews:searchrequest-xml/temp/SearchRequest.xml?jqlQuery=${encodedJqlQuery}&tempMax=1000`;
 }
@@ -177,14 +178,20 @@ async function downloadWeeklyXmlFiles(weeks: WeekRange[], options: CliOptions): 
     totalProcessed: 0
   };
   
+  // Get today's date in YYYY-MM-DD format for the current week
+  const today = new Date().toISOString().split('T')[0];
+  
   console.log(`\nStarting download of ${weeks.length} weekly XML files...`);
   console.log(`Output directory: ${outputDir}`);
   
   for (let i = 0; i < weeks.length; i++) {
     const week = weeks[i];
     const filename = `WeekOf_${week.start}.xml`;
-    const jqlQuery = generateJqlQuery(week, specification);
-    const url = generateUrl(week, specification);
+    
+    // For the first week (current week), use today as upper bound to exclude future dates
+    const upperBound = i === 0 ? today : undefined;
+    const jqlQuery = generateJqlQuery(week, specification, upperBound);
+    const url = generateUrl(week, specification, upperBound);
     const headers = createFetchHeaders(cookie, jqlQuery);
     
     console.log(`\nProcessing week ${i + 1}/${weeks.length}: ${week.start} to ${week.end}`);
