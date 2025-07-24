@@ -80,7 +80,7 @@ function generateWeekRanges(limit: number | null = null): WeekRange[] {
 
 function generateJqlQuery(week: WeekRange, specification?: string, upperBound?: string): string {
   const endDate = upperBound || week.end;
-  const baseQuery = `project = "FHIR Specification Feedback" and updated <= '${endDate} 23:59:59' and updated >= '${week.start} 00:00:00' order by updated asc`;
+  const baseQuery = `project = "FHIR Specification Feedback" and updated <= '${endDate} 23:59' and updated >= '${week.start} 00:00' order by updated asc`;
   
   if (specification) {
     return `Specification = "${specification}" and ${baseQuery}`;
