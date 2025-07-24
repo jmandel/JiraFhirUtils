@@ -94,7 +94,7 @@ export class KeywordUtils {
   private db: Database;
 
   constructor(dbPath: string) {
-    this.db = new Database(dbPath);
+    this.db = new Database(dbPath, { strict: true });
   }
 
   /**
@@ -116,12 +116,12 @@ export class KeywordUtils {
         tf_score,
         idf_score
       FROM tfidf_keywords
-      WHERE issue_key = ?
+      WHERE issue_key = $issueKey
       ORDER BY tfidf_score DESC
-      LIMIT ?
+      LIMIT $limit
     `;
     
-    return this.db.prepare(query).all(issueKey, limit) as KeywordRecord[];
+    return this.db.prepare(query).all({ issueKey, limit }) as KeywordRecord[];
   }
 
   /**
@@ -135,7 +135,7 @@ export class KeywordUtils {
       keywordArray = keywords;
     }
     
-    const placeholders = keywordArray.map(() => '?').join(',');
+    const placeholders = keywordArray.map((_, i) => `$keyword${i}`).join(',');
     const query = `
       SELECT 
         issue_key,
@@ -146,10 +146,15 @@ export class KeywordUtils {
       WHERE keyword IN (${placeholders})
       GROUP BY issue_key
       ORDER BY match_count DESC, total_score DESC
-      LIMIT ?
+      LIMIT $limit
     `;
     
-    return this.db.prepare(query).all(...keywordArray, limit) as KeywordSearchResult[];
+    const params: { [key: string]: any } = { limit };
+    keywordArray.forEach((keyword, i) => {
+      params[`keyword${i}`] = keyword;
+    });
+    
+    return this.db.prepare(query).all(params) as KeywordSearchResult[];
   }
 
   /**
@@ -171,36 +176,37 @@ export class KeywordUtils {
     
     // Find issues with overlapping keywords
     const keywords = Array.from(keywordWeights.keys());
-    const placeholders = keywords.map(() => '?').join(',');
+    const keywordPlaceholders = keywords.map((_, i) => `$keyword${i}`).join(',');
+    const weightPlaceholders = keywords.map((_, i) => `$weight${i}`).join(' + ');
     
     const query = `
       SELECT 
         t1.issue_key,
         GROUP_CONCAT(t1.keyword) as common_keywords,
-        SUM(t1.tfidf_score * ?) as similarity_score,
+        SUM(CASE 
+          ${keywords.map((_, i) => `WHEN t1.keyword = $keyword${i} THEN t1.tfidf_score * $weight${i}`).join(' ')}
+          ELSE 0 
+        END) as similarity_score,
         COUNT(DISTINCT t1.keyword) as common_count,
         i.title,
         i.status
       FROM tfidf_keywords t1
       JOIN issues i ON t1.issue_key = i.key
-      WHERE t1.keyword IN (${placeholders})
-        AND t1.issue_key != ?
+      WHERE t1.keyword IN (${keywordPlaceholders})
+        AND t1.issue_key != $issueKey
       GROUP BY t1.issue_key
       ORDER BY similarity_score DESC
-      LIMIT ?
+      LIMIT $limit
     `;
     
-    // Build parameters with weights
-    const params: (string | number)[] = [];
-    keywords.forEach(kw => {
-      const weight = keywordWeights.get(kw);
-      if (weight !== undefined) {
-        params.push(weight);
-      }
+    // Build parameters object
+    const params: { [key: string]: any } = { issueKey, limit };
+    keywords.forEach((keyword, i) => {
+      params[`keyword${i}`] = keyword;
+      params[`weight${i}`] = keywordWeights.get(keyword) || 0;
     });
-    params.push(...keywords, issueKey, limit);
     
-    return this.db.prepare(query).all(...params) as SimilarIssueResult[];
+    return this.db.prepare(query).all(params) as SimilarIssueResult[];
   }
 
   /**
@@ -233,12 +239,12 @@ export class KeywordUtils {
         MAX(tk.tfidf_score) as max_score
       FROM tfidf_keywords tk
       JOIN issues i ON tk.issue_key = i.key
-      WHERE tk.keyword = ?
+      WHERE tk.keyword = $keyword
       GROUP BY period
       ORDER BY period
     `;
     
-    return this.db.prepare(query).all(keyword) as KeywordTrendResult[];
+    return this.db.prepare(query).all({ keyword }) as KeywordTrendResult[];
   }
 
   /**
@@ -253,13 +259,13 @@ export class KeywordUtils {
         SUM(tk.tfidf_score) as total_score
       FROM tfidf_keywords tk
       JOIN issues i ON tk.issue_key = i.key
-      WHERE i.project_key = ?
+      WHERE i.project_key = $projectKey
       GROUP BY tk.keyword
       ORDER BY issue_count DESC, total_score DESC
-      LIMIT ?
+      LIMIT $limit
     `;
     
-    return this.db.prepare(query).all(projectKey, limit) as ProjectKeywordResult[];
+    return this.db.prepare(query).all({ projectKey, limit }) as ProjectKeywordResult[];
   }
 
   /**
@@ -274,8 +280,8 @@ export class KeywordUtils {
       FROM tfidf_keywords
       GROUP BY keyword
       ORDER BY frequency DESC
-      LIMIT ?
-    `).all(topN) as TopKeywordResult[];
+      LIMIT $topN
+    `).all({ topN }) as TopKeywordResult[];
     
     const keywords = topKeywords.map(k => k.keyword);
     const cooccurrence = new Map<string, number>();
@@ -290,8 +296,8 @@ export class KeywordUtils {
           SELECT COUNT(DISTINCT t1.issue_key) as count
           FROM tfidf_keywords t1
           JOIN tfidf_keywords t2 ON t1.issue_key = t2.issue_key
-          WHERE t1.keyword = ? AND t2.keyword = ?
-        `).get(kw1, kw2) as { count: number };
+          WHERE t1.keyword = $kw1 AND t2.keyword = $kw2
+        `).get({ kw1, kw2 }) as { count: number };
         
         if (result.count > 0) {
           const key = `${kw1}|${kw2}`;
@@ -371,8 +377,8 @@ export class KeywordUtils {
       FROM tfidf_keywords
       GROUP BY keyword
       ORDER BY frequency DESC
-      LIMIT ?
-    `).all(limit) as KeywordVisualizationResult[];
+      LIMIT $limit
+    `).all({ limit }) as KeywordVisualizationResult[];
     
     // Format for common visualization libraries
     return {

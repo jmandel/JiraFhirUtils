@@ -24,7 +24,7 @@ console.log('Testing database connection...');
 console.log(`Database path: ${DB_PATH}`);
 
 try {
-  const db = new Database(DB_PATH, { readonly: true });
+  const db = new Database(DB_PATH, { readonly: true, strict: true });
   
   // Test basic query
   const issueCount = db.prepare('SELECT COUNT(*) as count FROM issues').get() as CountResult;

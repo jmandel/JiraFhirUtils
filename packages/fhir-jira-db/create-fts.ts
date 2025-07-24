@@ -210,7 +210,7 @@ async function main(): Promise<void> {
         process.exit(1);
     }
     
-    const db = new Database(databasePath);
+    const db = new Database(databasePath, { strict: true });
     
     try {
         db.exec("PRAGMA journal_mode = WAL;");

@@ -309,10 +309,10 @@ function loadIssues(db: Database, offset: number = 0, limit: number = CONFIG.bat
     LEFT JOIN comments c ON i.issue_key = c.issue_key
     GROUP BY i.issue_key
     ORDER BY i.issue_key
-    LIMIT ? OFFSET ?
+    LIMIT $limit OFFSET $offset
   `;
   
-  return db.prepare(query).all(limit, offset) as IssueData[];
+  return db.prepare(query).all({ limit, offset }) as IssueData[];
 }
 
 // Extract related values from comma-separated fields
@@ -738,10 +738,10 @@ function showSampleResults(db: Database): void {
     const issueKeywords = db.prepare(`
       SELECT keyword, tfidf_score 
       FROM tfidf_keywords 
-      WHERE issue_key = ?
+      WHERE issue_key = $issue_key
       ORDER BY tfidf_score DESC
       LIMIT 10
-    `).all(sampleIssue.issue_key) as IssueKeyword[];
+    `).all({ issue_key: sampleIssue.issue_key }) as IssueKeyword[];
     
     console.log(`\nTop keywords for issue ${sampleIssue.issue_key}:`);
     issueKeywords.forEach((kw, idx) => {
@@ -789,7 +789,7 @@ async function main(): Promise<void> {
     }
     
     // Connect to database
-    db = new Database(config.dbPath);
+    db = new Database(config.dbPath, { strict: true });
     
     // Validate database structure
     validateDatabase(db);

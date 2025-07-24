@@ -207,7 +207,7 @@ async function processUpdateFile(filePath: string, db: Database): Promise<void> 
 
     // For custom fields, we delete all existing ones for the issue and re-insert them.
     // This is the simplest way to handle additions, updates, and deletions.
-    const deleteCustomFields = db.prepare("DELETE FROM custom_fields WHERE issue_key = ?");
+    const deleteCustomFields = db.prepare("DELETE FROM custom_fields WHERE issue_key = $issue_key");
     const insertCustomField = db.prepare(
         `INSERT INTO custom_fields (issue_key, field_id, field_key, field_name, field_value)
          VALUES ($issue_key, $field_id, $field_key, $field_name, $field_value)`
@@ -259,7 +259,7 @@ async function processUpdateFile(filePath: string, db: Database): Promise<void> 
         upsertIssue.run(issueData);
 
         // 2. Replace custom fields
-        deleteCustomFields.run(issueKey);
+        deleteCustomFields.run({ issue_key: issueKey });
         const customFields = item.customfields?.customfield;
         if (customFields) {
             for (const field of customFields) {
@@ -342,7 +342,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const db = new Database(databasePath);
+  const db = new Database(databasePath, { strict: true });
   db.exec("PRAGMA journal_mode = WAL;");
 
   const pattern = path.join(updatePath, XML_GLOB_PATTERN).replace(/\\/g, '/');

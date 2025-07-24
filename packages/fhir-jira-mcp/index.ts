@@ -126,7 +126,7 @@ class JiraIssuesMCPServer {
   async init(): Promise<void> {
     try {
       const dbPath = await getDatabasePath();
-      this.db = new Database(dbPath, { readonly: true });
+      this.db = new Database(dbPath, { readonly: true, strict: true });
       console.error(`Connected to database at ${dbPath}`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -272,46 +272,44 @@ class JiraIssuesMCPServer {
     
     const searchConditions: string[] = [];
     let query = 'SELECT * FROM issues_fts';
-    const queryParams: any[] = [];
+    const queryParams: { [key: string]: any } = { limit, offset };
     
     if (project_key) {
-      searchConditions.push('project_key = ?');
-      queryParams.push(project_key);
+      searchConditions.push('project_key = $project_key');
+      queryParams.project_key = project_key;
     }
     
     if (work_group) {
-      searchConditions.push('work_group = ?');
-      queryParams.push(work_group);
+      searchConditions.push('work_group = $work_group');
+      queryParams.work_group = work_group;
     }
     
     if (resolution) {
-      searchConditions.push('resolution = ?');
-      queryParams.push(resolution);
+      searchConditions.push('resolution = $resolution');
+      queryParams.resolution = resolution;
     }
     
     if (status) {
-      searchConditions.push('status = ?');
-      queryParams.push(status);
+      searchConditions.push('status = $status');
+      queryParams.status = status;
     }
     
     if (assignee) {
-      searchConditions.push('assignee = ?');
-      queryParams.push(assignee);
+      searchConditions.push('assignee = $assignee');
+      queryParams.assignee = assignee;
     }
 
     if (searchConditions.length > 0) {
       query += ' WHERE ' + searchConditions.join(' AND ');
     }
     
-    // query += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
-    query += ' ORDER BY issue_int DESC LIMIT ? OFFSET ?';
-    queryParams.push(limit);
-    queryParams.push(offset);
+    // query += ' ORDER BY updated_at DESC LIMIT $limit OFFSET $offset';
+    query += ' ORDER BY issue_int DESC LIMIT $limit OFFSET $offset';
     
     try {
       // console.log(`Executing query: ${query} with params:`, queryParams);
       const stmt = this.db.prepare(query);
-      const issues = stmt.all(...queryParams) as IssueRecord[];
+      const issues = stmt.all(queryParams) as IssueRecord[];
       
       return {
         content: [{
@@ -341,11 +339,11 @@ class JiraIssuesMCPServer {
     const { issue_key, limit = 10 } = args;
     
     // retrieve the original issue so we can use it for context
-    const sourceIssueQuery = 'SELECT * FROM issues_fts WHERE issue_key = ?';
+    const sourceIssueQuery = 'SELECT * FROM issues_fts WHERE issue_key = $issue_key';
     let sourceIssue: IssueRecord | null;
     try {
       const sourceIssueStatement = this.db.prepare(sourceIssueQuery);
-      sourceIssue = sourceIssueStatement.get(issue_key) as IssueRecord | null;
+      sourceIssue = sourceIssueStatement.get({ issue_key }) as IssueRecord | null;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -371,9 +369,9 @@ class JiraIssuesMCPServer {
     let linkedIssues: string[] = [];
 
     try {
-      const linkedIssuesQuery = `SELECT field_value FROM custom_fields WHERE issue_key = ? AND field_name = 'Related Issues'`;
+      const linkedIssuesQuery = `SELECT field_value FROM custom_fields WHERE issue_key = $issue_key AND field_name = 'Related Issues'`;
       const linkedIssuesStatement = this.db.prepare(linkedIssuesQuery);
-      const linkedIssueValue = linkedIssuesStatement.get(issue_key) as { field_value: string } | null;
+      const linkedIssueValue = linkedIssuesStatement.get({ issue_key }) as { field_value: string } | null;
 
       if (linkedIssueValue && linkedIssueValue.field_value) {
         linkedIssues = linkedIssueValue.field_value.split(',').map(issue => issue.trim());
@@ -390,11 +388,11 @@ class JiraIssuesMCPServer {
     }
 
     // get the top keywords from the source issue
-    const keywordQuery = 'SELECT keyword from tfidf_keywords where issue_key = ? ORDER BY tfidf_score DESC LIMIT 3';
+    const keywordQuery = 'SELECT keyword from tfidf_keywords where issue_key = $issue_key ORDER BY tfidf_score DESC LIMIT 3';
     let keywords = '';
     try {
       const keywordStatement = this.db.prepare(keywordQuery);
-      const keywordRows = keywordStatement.all(issue_key) as KeywordRecord[];
+      const keywordRows = keywordStatement.all({ issue_key }) as KeywordRecord[];
       if (keywordRows.length > 0) {
         keywords = keywordRows.map(row => row.keyword).join(' OR ');
       }
@@ -412,15 +410,18 @@ class JiraIssuesMCPServer {
     // Build a regular SQL query using the issues_fts table for consistency
     let baseQuery = 'SELECT issue_key FROM issues_fts WHERE ';
     const conditions: string[] = [];
-    const queryParams: any[] = [];
+    const queryParams: { [key: string]: any } = {
+      project_key: sourceIssue.project_key,
+      work_group: sourceIssue.work_group,
+      issue_key: issue_key,
+      limit: limit
+    };
+    let paramCounter = 0;
 
     // Match project_key and work_group
-    conditions.push('project_key = ?');
-    conditions.push('work_group = ?');
-    conditions.push('issue_key != ?');
-    queryParams.push(sourceIssue.project_key);
-    queryParams.push(sourceIssue.work_group);
-    queryParams.push(issue_key);
+    conditions.push('project_key = $project_key');
+    conditions.push('work_group = $work_group');
+    conditions.push('issue_key != $issue_key');
 
     // Add related_url, related_artifacts, related_pages if present
     (['related_url', 'related_artifacts', 'related_pages'] as const).forEach(field => {
@@ -429,7 +430,7 @@ class JiraIssuesMCPServer {
         if (typeof sourceIssue![field] === 'string' && sourceIssue![field]!.includes(',')) {
           const fieldTerms: string[] = [];
           const terms = sourceIssue![field]!.split(',').map(term => term.trim());
-          terms.forEach((term) => {
+          terms.forEach((term, termIndex) => {
             let searchTerm = term;
             
             // For related_url, extract filename from URL
@@ -448,8 +449,9 @@ class JiraIssuesMCPServer {
               }
             }
             
-            fieldTerms.push(`${field} LIKE ?`);
-            queryParams.push(`%${searchTerm}%`);
+            const paramName = `${field}_term_${termIndex}`;
+            fieldTerms.push(`${field} LIKE $${paramName}`);
+            queryParams[paramName] = `%${searchTerm}%`;
           });
           if (fieldTerms.length > 0) {
             conditions.push(`(${fieldTerms.join(' OR ')})`);
@@ -473,8 +475,9 @@ class JiraIssuesMCPServer {
             }
           }
           
-          conditions.push(`${field} LIKE ?`);
-          queryParams.push(`%${searchTerm}%`);
+          const paramName = `${field}_single`;
+          conditions.push(`${field} LIKE $${paramName}`);
+          queryParams[paramName] = `%${searchTerm}%`;
         }
       }
     });
@@ -496,14 +499,13 @@ class JiraIssuesMCPServer {
       }
     }
 
-    baseQuery += conditions.join(' AND ') + ' ORDER BY issue_int DESC LIMIT ?';
-    queryParams.push(limit);
+    baseQuery += conditions.join(' AND ') + ' ORDER BY issue_int DESC LIMIT $limit';
     
     let debug = 'start';
     try {
       const stmt = this.db.prepare(baseQuery);
       debug = 'after prepare';
-      const relatedIssues = stmt.all(...queryParams) as { issue_key: string }[];
+      const relatedIssues = stmt.all(queryParams) as { issue_key: string }[];
       debug = 'after execute';
       
       // Combine keyword matches with related field matches, removing duplicates
@@ -548,11 +550,11 @@ class JiraIssuesMCPServer {
     const { issue_key, limit = 10 } = args;
     
     // retrieve the original issue so we can use it for context
-    const sourceIssueQuery = 'SELECT * FROM issues_fts WHERE issue_key = ?';
+    const sourceIssueQuery = 'SELECT * FROM issues_fts WHERE issue_key = $issue_key';
     let sourceIssue: IssueRecord | null;
     try {
       const sourceIssueStatement = this.db.prepare(sourceIssueQuery);
-      sourceIssue = sourceIssueStatement.get(issue_key) as IssueRecord | null;
+      sourceIssue = sourceIssueStatement.get({ issue_key }) as IssueRecord | null;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return {
@@ -578,15 +580,15 @@ class JiraIssuesMCPServer {
     let linkedIssues: IssueRecord[] = [];
 
     try {
-      const linkedIssuesQuery = `SELECT field_value FROM custom_fields WHERE issue_key = ? AND field_name = 'Related Issues'`;
+      const linkedIssuesQuery = `SELECT field_value FROM custom_fields WHERE issue_key = $issue_key AND field_name = 'Related Issues'`;
       const linkedIssuesStatement = this.db.prepare(linkedIssuesQuery);
-      const linkedIssueValue = linkedIssuesStatement.get(issue_key) as { field_value: string } | null;
+      const linkedIssueValue = linkedIssuesStatement.get({ issue_key }) as { field_value: string } | null;
 
       if (linkedIssueValue && linkedIssueValue.field_value) {
         const relatedIssueKeys = linkedIssueValue.field_value.split(',').map(issue => issue.trim());
         linkedIssues = relatedIssueKeys.map(key => {
-          const issueStmt = this.db!.prepare('SELECT * FROM issues_fts WHERE issue_key = ?');
-          return issueStmt.get(key) as IssueRecord | null;
+          const issueStmt = this.db!.prepare('SELECT * FROM issues_fts WHERE issue_key = $key');
+          return issueStmt.get({ key }) as IssueRecord | null;
         }).filter((issue): issue is IssueRecord => issue !== null); // filter out any null results
       }
     } catch (error) {
@@ -601,11 +603,11 @@ class JiraIssuesMCPServer {
     }
 
     // get the top keywords from the source issue
-    const keywordQuery = 'SELECT keyword from tfidf_keywords where issue_key = ? ORDER BY tfidf_score DESC LIMIT 3';
+    const keywordQuery = 'SELECT keyword from tfidf_keywords where issue_key = $issue_key ORDER BY tfidf_score DESC LIMIT 3';
     let keywords = '';
     try {
       const keywordStatement = this.db.prepare(keywordQuery);
-      const keywordRows = keywordStatement.all(issue_key) as KeywordRecord[];
+      const keywordRows = keywordStatement.all({ issue_key }) as KeywordRecord[];
       if (keywordRows.length > 0) {
         keywords = keywordRows.map(row => row.keyword).join(' OR ');
       }
@@ -623,15 +625,17 @@ class JiraIssuesMCPServer {
     // Build a regular SQL query using the issues_fts table for consistency
     let baseQuery = 'SELECT * FROM issues_fts WHERE ';
     const conditions: string[] = [];
-    const queryParams: any[] = [];
+    const queryParams: { [key: string]: any } = {
+      project_key: sourceIssue.project_key,
+      work_group: sourceIssue.work_group,
+      issue_key: issue_key,
+      limit: limit
+    };
 
     // Match project_key and work_group
-    conditions.push('project_key = ?');
-    conditions.push('work_group = ?');
-    conditions.push('issue_key != ?');
-    queryParams.push(sourceIssue.project_key);
-    queryParams.push(sourceIssue.work_group);
-    queryParams.push(issue_key);
+    conditions.push('project_key = $project_key');
+    conditions.push('work_group = $work_group');
+    conditions.push('issue_key != $issue_key');
 
     // Add related_url, related_artifacts, related_pages if present
     (['related_url', 'related_artifacts', 'related_pages'] as const).forEach(field => {
@@ -640,7 +644,7 @@ class JiraIssuesMCPServer {
         if (typeof sourceIssue![field] === 'string' && sourceIssue![field]!.includes(',')) {
           const fieldTerms: string[] = [];
           const terms = sourceIssue![field]!.split(',').map(term => term.trim());
-          terms.forEach((term) => {
+          terms.forEach((term, termIndex) => {
             let searchTerm = term;
             
             // For related_url, extract filename from URL
@@ -659,8 +663,9 @@ class JiraIssuesMCPServer {
               }
             }
             
-            fieldTerms.push(`${field} LIKE ?`);
-            queryParams.push(`%${searchTerm}%`);
+            const paramName = `${field}_term_${termIndex}`;
+            fieldTerms.push(`${field} LIKE $${paramName}`);
+            queryParams[paramName] = `%${searchTerm}%`;
           });
           if (fieldTerms.length > 0) {
             conditions.push(`(${fieldTerms.join(' OR ')})`);
@@ -684,14 +689,14 @@ class JiraIssuesMCPServer {
             }
           }
           
-          conditions.push(`${field} LIKE ?`);
-          queryParams.push(`%${searchTerm}%`);
+          const paramName = `${field}_single`;
+          conditions.push(`${field} LIKE $${paramName}`);
+          queryParams[paramName] = `%${searchTerm}%`;
         }
       }
     });
 
-    baseQuery += conditions.join(' AND ') + ' ORDER BY issue_int DESC LIMIT ?';
-    queryParams.push(limit);
+    baseQuery += conditions.join(' AND ') + ' ORDER BY issue_int DESC LIMIT $limit';
     
     let keywordMatches: IssueRecord[] = [];
     
@@ -719,7 +724,7 @@ class JiraIssuesMCPServer {
     
     try {
       const stmt = this.db.prepare(baseQuery);
-      const fieldMatches = stmt.all(...queryParams) as IssueRecord[];
+      const fieldMatches = stmt.all(queryParams) as IssueRecord[];
       
       // Combine field matches with keyword matches, removing duplicates
       const allMatches = new Map<string, IssueRecord>();
@@ -804,8 +809,8 @@ class JiraIssuesMCPServer {
     const { issue_key } = args;
     
     try {
-      const issueStmt = this.db.prepare('SELECT * FROM issues WHERE key = ?');
-      const issue = issueStmt.get(issue_key) as IssueRecord | null;
+      const issueStmt = this.db.prepare('SELECT * FROM issues WHERE key = $issue_key');
+      const issue = issueStmt.get({ issue_key }) as IssueRecord | null;
       
       if (!issue) {
         return {
@@ -819,9 +824,9 @@ class JiraIssuesMCPServer {
       
       // Get custom fields
       const customFieldsStmt = this.db.prepare(
-        'SELECT field_name, field_value FROM custom_fields WHERE issue_key = ?'
+        'SELECT field_name, field_value FROM custom_fields WHERE issue_key = $issue_key'
       );
-      const customFields = customFieldsStmt.all(issue_key) as CustomFieldRecord[];
+      const customFields = customFieldsStmt.all({ issue_key }) as CustomFieldRecord[];
       
       const customFieldsMap: Record<string, string> = {};
       customFields.forEach(field => {
@@ -830,9 +835,9 @@ class JiraIssuesMCPServer {
       
       // Get comment count
       const commentCountStmt = this.db.prepare(
-        'SELECT COUNT(*) as count FROM comments WHERE issue_key = ?'
+        'SELECT COUNT(*) as count FROM comments WHERE issue_key = $issue_key'
       );
-      const commentCount = (commentCountStmt.get(issue_key) as { count: number }).count;
+      const commentCount = (commentCountStmt.get({ issue_key }) as { count: number }).count;
       
       const result = {
         ...issue,
@@ -865,9 +870,9 @@ class JiraIssuesMCPServer {
     
     try {
       const stmt = this.db.prepare(
-        'SELECT * FROM comments WHERE issue_key = ? ORDER BY created_at DESC'
+        'SELECT * FROM comments WHERE issue_key = $issue_key ORDER BY created_at DESC'
       );
-      const comments = stmt.all(issue_key) as CommentRecord[];
+      const comments = stmt.all({ issue_key }) as CommentRecord[];
       
       return {
         content: [{

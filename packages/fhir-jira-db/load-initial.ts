@@ -378,7 +378,7 @@ async function main(): Promise<void> {
   console.log(`Using database: ${databasePath}`);
   console.log(`Initial directory: ${initialDir}`);
 
-  const db = new Database(databasePath);
+  const db = new Database(databasePath, { strict: true, });
   setupDatabase(db);
 
   // Guard: Check if initial directory exists

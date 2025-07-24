@@ -25,7 +25,7 @@ async function testTFIDF(): Promise<void> {
   const databasePath: string = await getDatabasePath();
   console.log(`Using database: ${databasePath}`);
   
-  const db = new Database(databasePath);
+  const db = new Database(databasePath, { strict: true });
   
   try {
     // Check if TF-IDF tables exist
