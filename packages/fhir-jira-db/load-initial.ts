@@ -196,7 +196,27 @@ function setupDatabase(db: Database): void {
     );
   `);
 
+  createCommentsIndexes(db);
+  
   console.log("Database schema is ready.");
+}
+
+/**
+ * Creates indexes for the comments table to optimize query performance.
+ * @param db - The database instance.
+ */
+function createCommentsIndexes(db: Database): void {
+  console.log("Creating comments table indexes...");
+  
+  // Critical index for JOIN performance in loadIssues query
+  db.exec("CREATE INDEX IF NOT EXISTS idx_comments_issue_key ON comments(issue_key)");
+  console.log("✓ Created index: idx_comments_issue_key");
+  
+  // Covering index for GROUP_CONCAT optimization
+  db.exec("CREATE INDEX IF NOT EXISTS idx_comments_issue_key_body ON comments(issue_key, body)");
+  console.log("✓ Created index: idx_comments_issue_key_body");
+  
+  console.log("Comments indexes created successfully.");
 }
 
 
