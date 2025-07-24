@@ -7,7 +7,7 @@ import { getDatabasePath, setupDatabaseCliArgs } from "@jira-fhir-utils/database
 
 // --- Configuration ---
 const INITIAL_SUBDIRECTORY = "bulk"; // The subdirectory containing the initial XML files
-const XML_GLOB_PATTERN = "*.xml";
+const XML_GLOB_PATTERN = "**/*.xml";
 
 // --- Type Definitions ---
 
@@ -388,10 +388,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const pattern = path.join(initialPath, XML_GLOB_PATTERN).replace(/\\/g, '/');
-  const glob = new Bun.Glob(pattern);
-  const files = await Array.fromAsync(glob.scan({ cwd: initialDir, onlyFiles: true }))
-    .then(results => results.map(file => path.join(initialDir, file)));
+  const glob = new Bun.Glob(XML_GLOB_PATTERN);
+  const files = await Array.fromAsync(glob.scan({ cwd: initialPath, onlyFiles: true }))
+    .then(results => results.map(file => path.join(initialPath, file)));
 
   if (files.length === 0) {
     console.log(`No XML files found matching pattern '${XML_GLOB_PATTERN}' in subdirectory '${initialDir}'.`);

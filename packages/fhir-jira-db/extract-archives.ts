@@ -47,18 +47,29 @@ async function main(): Promise<void> {
   
   const __filename: string = fileURLToPath(import.meta.url);
   const scriptDir: string = path.dirname(__filename);
-  process.chdir(scriptDir);
   
   console.log(`Working directory: ${process.cwd()}\n`);
   
   let success: boolean = true;
+  let updatesProcessed: boolean = false;
   
+  // Extract bulk archive (required)
   success = await extractArchive(BULK_ARCHIVE, BULK_DIR) && success;
   
-  success = await extractArchive(UPDATES_ARCHIVE, UPDATES_DIR) && success;
+  // Extract updates archive (optional)
+  if (fs.existsSync(UPDATES_ARCHIVE)) {
+    success = await extractArchive(UPDATES_ARCHIVE, UPDATES_DIR) && success;
+    updatesProcessed = true;
+  } else {
+    console.log(`ℹ Updates archive not found: ${UPDATES_ARCHIVE} (skipping - this is optional)`);
+  }
   
   if (success) {
-    console.log("\n✓ All archives extracted successfully!");
+    if (updatesProcessed) {
+      console.log("\n✓ All archives extracted successfully!");
+    } else {
+      console.log("\n✓ Bulk archive extracted successfully! (Updates archive was not found)");
+    }
   } else {
     console.log("\n✗ Some archives failed to extract. Check the errors above.");
     process.exit(1);

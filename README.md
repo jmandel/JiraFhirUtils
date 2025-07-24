@@ -15,14 +15,14 @@ This project uses a monorepo structure with workspaces:
 ## Database Processing (`packages/fhir-jira-db`)
 
 This package contains utilities to create a SQLite database based on Jira tickets and compressed files with FHIR Core ticket XML exports:
+* `download-issues.ts` downloads issues directly from Jira using the REST API
 * `extract-archives.ts` extracts the included tar.gz archives into their respective directories for processing
 * `load-initial.ts` loads the contents of the `bulk` directory, creates a database, and assumes no duplicates/conflicts
 * `load-updates.ts` loads the contents of the `updates` directory into the database, updating existing records if they exist or adding new records if they do not
 * `create-fts.ts` creates SQLite FTS5 full-text search tables for `issues` and `comments` from the database
 * `create-tfidf.ts` extracts TF-IDF data from Jira issues
-* `download-issues.ts` downloads issues directly from Jira using the REST API
-* `bulk.tar.gz` contains FHIR Core tickets FHIR-2839 through FHIR-51487, as of 2025.07.15
-* `updates.tar.gz` contains FHIR Core tickets that have changes on 2025.07.15
+* `bulk.tar.gz` contains FHIR Core tickets FHIR-2839 through FHIR-51487, as of 2025.07.22
+* ~~`updates.tar.gz` contains FHIR Core tickets that have changes on 2025.07.22~~ (currently there are no updates)
 
 - **extract-archives.ts**
   Use this script to extract the tar.gz archives before processing. It will extract `bulk.tar.gz` to the `bulk` directory and `updates.tar.gz` to the `updates` directory. Any existing directories will be replaced.
